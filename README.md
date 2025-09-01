@@ -16,7 +16,7 @@ This web-based tool provides a user-friendly interface to translate subtitle fil
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repository-url>
+    git clone [https://github.com/VenimK/gemini-srt-translator-web]
     cd gemini-srt-translator-web
     ```
 
