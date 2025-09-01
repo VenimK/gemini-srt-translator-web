@@ -1,0 +1,124 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [created]
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.11']
+        node-version: ['20']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Set up Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Install Node.js dependencies
+      run: npm ci
+      working-directory: ./static
+    
+    - name: Lint Python code
+      run: |
+        pip install flake8
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Verify application starts
+      run: |
+        # Start the application in the background
+        python -m uvicorn main:app --host 0.0.0.0 --port 8000 &
+        SERVER_PID=$!
+        
+        # Give the server a moment to start
+        sleep 5
+        
+        # Check if the server is running
+        curl -s http://localhost:8000/health || echo "Server not running"
+        
+        # Kill the server
+        kill $SERVER_PID
+      shell: bash
+
+  release:
+    name: Create Release
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Get version from package.json
+      id: version
+      uses: martinbeentjes/npm-get-version-action@v1.3.1
+      with:
+        working-directory: './static'
+    
+    - name: Create Release
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.version.outputs.current-version }}
+        name: Release v${{ steps.version.outputs.current-version }}
+        body: |
+          ### Changes
+          - Auto-generated release
+          
+          ### How to use
+          1. Download the zip file
+          2. Extract it
+          3. Run `pip install -r requirements.txt`
+          4. Run `python main.py`
+        draft: false
+        prerelease: false
+    
+    - name: Create ZIP artifact
+      run: |
+        # Create a clean directory for the release
+        mkdir -p release
+        
+        # Copy only necessary files
+        cp -r static/ release/static/
+        cp -r backend/ release/backend/
+        cp main.py requirements.txt README.md config.json .env.example release/
+        
+        # Create ZIP file
+        cd release
+        zip -r ../gemini-srt-translator-v${{ steps.version.outputs.current-version }}.zip .
+        cd ..
+    
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./gemini-srt-translator-v${{ steps.version.outputs.current-version }}.zip
+        asset_name: gemini-srt-translator-v${{ steps.version.outputs.current-version }}.zip
+        asset_content_type: application/zip
