@@ -28,9 +28,13 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        # Explicitly install pytest
+        pip install pytest
         # Create necessary directories
         mkdir -p temp_uploads
         touch .env  # Create empty .env file for testing
+        # Verify pytest is installed
+        python -m pytest --version
     
     - name: Run tests
       run: |
