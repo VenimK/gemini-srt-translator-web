@@ -96,66 +96,77 @@ class Translator:
             logging.error(f"Translation error: {e}")
             raise
     
-    def translate_subtitle(self, subtitle_path: Path, output_path: Path, 
-                         progress_callback: Optional[Callable[[int, int], None]] = None) -> None:
+    def translate_subtitle(self, subtitle_path: Path, output_path: Path, progress_callback: Optional[Callable[[int, int], None]] = None) -> Path:
         """
-        Translate an SRT file with progress tracking.
+        Translate a subtitle file using the configured model.
         
         Args:
-            subtitle_path: Path to the source SRT file
-            output_path: Path to save the translated SRT file
-            progress_callback: Callback function that takes (current, total) as arguments
-        """
-        start_time = time.time()
+            subtitle_path: Path to the input subtitle file
+            output_path: Path where the translated subtitle will be saved
+            progress_callback: Optional callback function that takes (current, total) progress
         
+        Returns:
+            Path to the translated subtitle file
+        """
         try:
-            # Count total lines first for progress tracking
-            with open(subtitle_path, 'r', encoding='utf-8') as f:
-                total_lines = sum(1 for _ in f)
-            
-            translated_lines = []
-            current_line = 0
-            
+            # Read the subtitle file
             with open(subtitle_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # Split into subtitle blocks
-            blocks = re.split(r'\n\n', content.strip())
+            # Split into blocks (assuming each subtitle block is separated by two newlines)
+            blocks = content.split('\n\n')
+            total_blocks = len(blocks)
+            
+            translated_blocks = []
             
             for i, block in enumerate(blocks):
                 if not block.strip():
+                    translated_blocks.append('')
                     continue
                     
-                # Parse the block (simple SRT parser)
-                lines = block.split('\n')
-                if len(lines) < 3:  # At least number, timestamp, and text
-                    continue
-                    
-                # Keep the number and timestamp
-                header = '\n'.join(lines[:2])
-                text = '\n'.join(lines[2:])
-                
-                # Translate the text
-                translated_text = self.translate_text(text)
-                
-                # Rebuild the block
-                translated_block = f"{header}\n{translated_text}"
-                translated_lines.append(translated_block)
-                
-                # Update progress
-                current_line += len(lines) + 1  # +1 for the empty line between blocks
+                # Report progress
                 if progress_callback:
-                    progress = int((current_line / total_lines) * 100)
-                    progress_callback(progress, 100)
+                    progress_callback(i + 1, total_blocks)
+                
+                # Translate the block
+                try:
+                    # Check cache first
+                    cache_key = self._get_cache_key(block)
+                    if cache_key in self._cache:
+                        translated_text = self._cache[cache_key]
+                    else:
+                        # Call the Gemini API for translation
+                        response = self.model.generate_content(
+                            f"Translate the following subtitle text to {self.config.get('language_name', 'English')}. "
+                            "Keep the timing and formatting exactly the same, only translate the text. "
+                            f"Here's the text to translate: {block}"
+                        )
+                        translated_text = response.text
+                        
+                        # Cache the result
+                        self._cache[cache_key] = translated_text
+                        self._save_cache()
+                    
+                    translated_blocks.append(translated_text)
+                    
+                except Exception as e:
+                    logging.error(f"Error translating block {i + 1}: {str(e)}")
+                    # Keep the original text if translation fails
+                    translated_blocks.append(block)
             
-            # Write the translated file
+            # Write the translated content to the output file
+            translated_content = '\n\n'.join(translated_blocks)
             with open(output_path, 'w', encoding='utf-8') as f:
-                f.write('\n\n'.join(translated_lines))
+                f.write(translated_content)
             
-            logging.info(f"Translation completed in {time.time() - start_time:.2f} seconds")
+            # Final progress update
+            if progress_callback:
+                progress_callback(total_blocks, total_blocks)
+            
+            return output_path
             
         except Exception as e:
-            logging.error(f"Error in translate_subtitle: {e}")
+            logging.error(f"Error in translate_subtitle: {str(e)}")
             raise
     
     @classmethod

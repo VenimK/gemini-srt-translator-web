@@ -121,6 +121,23 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+class ProgressReporter:
+    def __init__(self, manager, client_id):
+        self.manager = manager
+        self.client_id = client_id
+        self.loop = asyncio.new_event_loop()
+        
+    def report(self, current: int, total: int):
+        # This runs in the thread pool
+        asyncio.run_coroutine_threadsafe(
+            self.manager.send_progress(
+                client_id=self.client_id,
+                progress=current,
+                total=total
+            ),
+            self.loop
+        )
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
     """Serve the main HTML page."""
@@ -197,6 +214,9 @@ async def translate_files_endpoint(selected_files: List[Dict[str, str]]):
         translator = Translator(current_config)
         language_code = current_config.get("language_code", "en")
         
+        # Create a progress reporter with the default client ID
+        progress_reporter = ProgressReporter(manager, "default")
+        
         translated_results = []
         
         for i, file_pair in enumerate(selected_files):
@@ -220,18 +240,9 @@ async def translate_files_endpoint(selected_files: List[Dict[str, str]]):
             logging.info(f"Starting translation for: {subtitle_path.name} ({i + 1}/{len(selected_files)})")
             
             try:
-                # Define progress callback
+                # Create a thread-safe progress callback
                 def progress_callback(current: int, total: int):
-                    # This runs in a separate thread, so we need to use run_in_executor
-                    loop = asyncio.get_event_loop()
-                    asyncio.run_coroutine_threadsafe(
-                        manager.send_progress(
-                            client_id="default",  # Or get from request if available
-                            progress=current,
-                            total=total
-                        ),
-                        loop
-                    )
+                    progress_reporter.report(current, total)
                 
                 # Run the translation in a thread pool
                 translated_path = await asyncio.to_thread(
@@ -257,6 +268,9 @@ async def translate_files_endpoint(selected_files: List[Dict[str, str]]):
                     "status": "Failed",
                     "error": str(e)
                 })
+            finally:
+                # Clean up the event loop
+                progress_reporter.loop.close()
         
         return JSONResponse(content=translated_results)
         
