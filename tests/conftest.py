@@ -24,7 +24,7 @@ def mock_file_operations():
 @pytest.fixture
 def mock_config():
     """Mock configuration for tests."""
-    with patch('main.config_manager.get_config', return_value={
+    with patch('main.config_manager.config_manager.get_config', return_value={
         "gemini_api_key": "test_key",
         "model": "gemini-pro",
         "language": "English",
@@ -35,5 +35,5 @@ def mock_config():
 @pytest.fixture
 def mock_models():
     """Mock model listing for tests."""
-    with patch('main.Translator.get_available_models', return_value=["gemini-pro"]):
+    with patch('main.Translator.get_models', return_value=["gemini-pro"]):
         yield

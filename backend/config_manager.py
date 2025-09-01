@@ -37,3 +37,7 @@ class ConfigManager:
 
     def update(self, new_config):
         self.config.update(new_config)
+
+    def get_config(self):
+        """Return the current configuration."""
+        return self.config

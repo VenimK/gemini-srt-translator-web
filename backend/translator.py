@@ -16,6 +16,11 @@ class Translator:
             logging.error("Gemini API Key not provided. Translation will fail.")
             self.model = None
 
+    @classmethod
+    def get_models(cls):
+        """Return a list of supported model names."""
+        return ["gemini-pro", "gemini-1.5-flash", "gemini-2.5-flash"]
+
     def translate_subtitle(self, subtitle_path, output_path, progress_callback=None):
         start_time = time.time()
         try:

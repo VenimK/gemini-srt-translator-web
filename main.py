@@ -86,8 +86,13 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
-    with open(os.path.join("static", "index.html"), "r") as f:
-        return f.read()
+    """Serve the main HTML page."""
+    try:
+        with open(os.path.join("static", "index.html"), 'r') as f:
+            return f.read()
+    except Exception as e:
+        logging.error(f"Error loading index.html: {e}")
+        return "<html><body><h1>Error loading page</h1></body></html>"
 
 @app.post("/upload_files/")
 async def upload_files(files: list[UploadFile] = File(...)):

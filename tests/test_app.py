@@ -4,7 +4,6 @@ from fastapi.testclient import TestClient
 
 # Mock Google Generative AI before importing main
 mock_genai = MagicMock()
-mock_genai.configure.return_value = None
 mock_model = MagicMock()
 mock_genai.GenerativeModel.return_value = mock_model
 mock_model.generate_content.return_value.text = "Mocked translation"
@@ -25,7 +24,7 @@ def test_read_root():
 
 def test_upload_endpoint():
     """Test the upload endpoint with a test file."""
-    test_file = ("test_file", ("test.srt", b"1\n00:00:01,000 --> 00:00:04,000\nHello world\n"))
+    test_file = ("test.srt", b"1\n00:00:01,000 --> 00:00:04,000\nHello world\n")
     with patch('shutil.copyfileobj'), \
          patch('os.makedirs'), \
          patch('pathlib.Path.mkdir'):
@@ -34,15 +33,14 @@ def test_upload_endpoint():
 
 def test_config_endpoint():
     """Test the config endpoint."""
-    with patch('main.config_manager.get_config', return_value={"gemini_api_key": "test"}):
+    with patch('main.config_manager.config_manager.get_config', return_value={"gemini_api_key": "test"}):
         response = client.get("/config/")
         assert response.status_code == 200
         assert "gemini_api_key" in response.json()
 
-@patch('main.Translator.get_available_models')
-def test_models_endpoint(mock_get_models):
+def test_models_endpoint():
     """Test the models endpoint."""
-    mock_get_models.return_value = ["gemini-pro"]
-    response = client.get("/models/")
-    assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    with patch('main.Translator.get_models', return_value=["gemini-pro"]):
+        response = client.get("/models/")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
