@@ -31,7 +31,7 @@ jobs:
       uses: actions/setup-node@v3
       with:
         node-version: ${{ matrix.node-version }}
-        cache: 'npm'
+        cache: 'false'  # Disable cache to avoid lock file requirement
     
     - name: Install Python dependencies
       run: |
@@ -39,7 +39,7 @@ jobs:
         pip install -r requirements.txt
     
     - name: Install Node.js dependencies
-      run: npm ci
+      run: npm install
       working-directory: ./static
     
     - name: Lint Python code
@@ -74,17 +74,23 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Set up Node.js
+    - name: Set up Node.js without cache
       uses: actions/setup-node@v3
       with:
         node-version: '20'
+        cache: 'false'  # Disable cache to avoid lock file requirement
     
     - name: Initialize package version
       id: version
+      working-directory: ./static
       run: |
-        cd static
-        npm init -y
-        echo "version=$(node -p 'require("./package.json").version')" >> $GITHUB_OUTPUT
+        # Create package.json if it doesn't exist
+        if [ ! -f package.json ]; then
+          echo '{"name": "gemini-srt-translator-web","version": "1.0.0"}' > package.json
+        fi
+        # Get the version from package.json or use 1.0.0 as default
+        VERSION=$(node -p 'require("./package.json").version || "1.0.0"')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
     
     - name: Create Release
       id: create_release
