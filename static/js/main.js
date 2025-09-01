@@ -407,11 +407,22 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('Translate button clicked.');
 
         const selectedFiles = [];
-        const selectedIndices = []; // Keep track of original indices
+        const selectedIndices = [];
+        
+        // Get all checked checkboxes
         fileListBody.querySelectorAll('input[type="checkbox"]:checked').forEach(checkbox => {
-            const rowIndex = checkbox.closest('tr').dataset.index;
-            selectedFiles.push(currentMatches[rowIndex]);
-            selectedIndices.push(rowIndex); // Store the index
+            const row = checkbox.closest('tr');
+            const rowIndex = row.dataset.index;
+            const fileData = currentMatches[rowIndex];
+            
+            // Create the file object in the expected format
+            const fileObj = {
+                subtitle: fileData.path || fileData.subtitle,
+                video: fileData.video || ''
+            };
+            
+            selectedFiles.push(fileObj);
+            selectedIndices.push(rowIndex);
         });
 
         if (selectedFiles.length === 0) {
@@ -427,10 +438,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/translate/', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    files: selectedFiles,
-                    client_id: clientId
-                }),
+                body: JSON.stringify(selectedFiles)
             });
 
             console.log('Received translation response:', response);
@@ -439,41 +447,41 @@ document.addEventListener('DOMContentLoaded', () => {
                 const results = await response.json();
                 logToConsole("<strong>Translation Results:</strong>");
                 console.log('Translation results received:', results);
-                results.forEach((result, i) => { // Use the loop index 'i' to get the original row index
-                    const originalName = result.original_subtitle.split('/').pop();
+                
+                results.forEach((result, i) => {
+                    const originalName = result.original_subtitle ? result.original_subtitle.split('/').pop() : 'Unknown';
                     const translatedName = result.translated_subtitle ? result.translated_subtitle.split('/').pop() : 'N/A';
                     const statusBadge = result.status === 'Success' ? 'bg-success' : 'bg-danger';
+                    
                     logToConsole(`- <strong>${originalName}</strong> -> ${translatedName} <span class="badge ${statusBadge}">${result.status}</span>`);
 
-                    // Find the row using the stored index
+                    // Update the UI to show the translated file
                     const originalIndex = selectedIndices[i];
                     const row = fileListBody.querySelector(`tr[data-index='${originalIndex}']`);
-                    console.log(`Processing result ${i}: originalIndex=${originalIndex}, row found:`, row);
-
                     if (row) {
-                        row.cells[3].innerHTML = `<span class="badge ${statusBadge}">${result.status}</span>`;
+                        const statusCell = row.cells[3];
+                        statusCell.innerHTML = `<span class="badge ${statusBadge}">${result.status}</span>`;
+                        
                         if (result.status === 'Success' && result.translated_subtitle) {
-                            const translatedName = result.translated_subtitle.split('/').pop();
-                            console.log(`Adding download button for ${translatedName} to row`, row);
-                            row.cells[4].innerHTML = `<a href="/download/${translatedName}" class="btn btn-sm btn-outline-success" download><i class="fas fa-download"></i> Download</a>`;
-                        } else {
-                            console.log('Translation not successful or no translated_subtitle path.');
+                            const downloadBtn = document.createElement('a');
+                            downloadBtn.href = `/download/${result.translated_subtitle.split('/').pop()}`;
+                            downloadBtn.className = 'btn btn-sm btn-success';
+                            downloadBtn.innerHTML = '<i class="fas fa-download"></i> Download';
+                            statusCell.appendChild(document.createElement('br'));
+                            statusCell.appendChild(downloadBtn);
                         }
                     }
                 });
-                showNotification('Translation process completed!');
+                
+                showNotification("Translation completed successfully!");
             } else {
-                const errorData = await response.json();
-                const errorMessage = `Error during translation: ${errorData.detail || response.statusText}`;
-                console.error('Translation failed with error response:', errorMessage, errorData);
-                logToConsole(errorMessage);
-                showNotification(errorMessage, true);
+                const error = await response.text();
+                throw new Error(`Server responded with status ${response.status}: ${error}`);
             }
         } catch (error) {
-            const errorMessage = `Network error during translation: ${error.message}`;
-            console.error('A network error occurred during translation:', errorMessage, error);
-            logToConsole(errorMessage);
-            showNotification(errorMessage, true);
+            console.error('Translation error:', error);
+            showNotification(`Translation failed: ${error.message}`, true);
+            logToConsole(`<span class="text-danger">Error: ${error.message}</span>`);
         } finally {
             hideLoading();
         }

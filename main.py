@@ -9,7 +9,7 @@ import asyncio
 import logging
 import threading
 from collections import deque
-from typing import Deque
+from typing import Deque, List, Dict
 
 from backend.file_utils import classify_file_type, find_video_matches
 from backend.config_manager import ConfigManager
@@ -177,64 +177,91 @@ async def get_models():
     ]
     return JSONResponse(content=models)
 
-@app.post("/translate")
-async def translate_files_endpoint(request: dict):
+@app.post("/translate/")
+async def translate_files_endpoint(selected_files: List[Dict[str, str]]):
     """
     Handle file translation with progress tracking.
     Expected request format:
-    {
-        "files": [{"path": "path/to/file.srt", "name": "file.srt"}],
-        "client_id": "unique_client_id"
-    }
+    [
+        {
+            "subtitle": "path/to/file.srt",
+            "video": "path/to/video.mp4"  # Optional
+        }
+    ]
     """
     try:
-        files = request.get("files", [])
-        client_id = request.get("client_id")
-        
-        if not files:
+        if not selected_files:
             raise HTTPException(status_code=400, detail="No files provided")
         
-        results = []
-        translator = Translator(config_manager.get_config())
+        current_config = config_manager.config
+        translator = Translator(current_config)
+        language_code = current_config.get("language_code", "en")
         
-        for file_info in files:
-            file_path = Path(file_info["path"])
-            output_path = UPLOAD_DIR / f"translated_{file_path.name}"
+        translated_results = []
+        
+        for i, file_pair in enumerate(selected_files):
+            subtitle_path_str = file_pair.get('subtitle')
+            if not subtitle_path_str:
+                translated_results.append({
+                    "original_subtitle": "",
+                    "status": "Failed",
+                    "error": "No subtitle path provided"
+                })
+                continue
+
+            subtitle_path = Path(subtitle_path_str)
+            output_dir = UPLOAD_DIR
+            output_dir.mkdir(exist_ok=True)
             
-            # Progress callback
-            async def progress_callback(current: int, total: int):
-                if client_id:
-                    await manager.send_progress(client_id, current, total)
+            # Create output filename with language code
+            output_filename = f"{subtitle_path.stem}.{language_code}{subtitle_path.suffix}"
+            output_path = output_dir / output_filename
+            
+            logging.info(f"Starting translation for: {subtitle_path.name} ({i + 1}/{len(selected_files)})")
             
             try:
-                # Wrap sync callback in async
-                def sync_progress(current: int, total: int):
-                    asyncio.create_task(progress_callback(current, total))
+                # Define progress callback
+                def progress_callback(current: int, total: int):
+                    # This runs in a separate thread, so we need to use run_in_executor
+                    loop = asyncio.get_event_loop()
+                    asyncio.run_coroutine_threadsafe(
+                        manager.send_progress(
+                            client_id="default",  # Or get from request if available
+                            progress=current,
+                            total=total
+                        ),
+                        loop
+                    )
                 
-                translator.translate_subtitle(
-                    file_path, 
+                # Run the translation in a thread pool
+                translated_path = await asyncio.to_thread(
+                    translator.translate_subtitle,
+                    subtitle_path,
                     output_path,
-                    progress_callback=sync_progress
+                    progress_callback=progress_callback
                 )
                 
-                results.append({
-                    "original": file_info["name"],
-                    "translated": output_path.name,
-                    "status": "completed"
-                })
-                
+                if translated_path and translated_path.exists():
+                    translated_results.append({
+                        "original_subtitle": str(subtitle_path),
+                        "translated_subtitle": str(translated_path),
+                        "status": "Success"
+                    })
+                else:
+                    raise Exception("Translation failed - no output file was created")
+                    
             except Exception as e:
-                logging.error(f"Error translating {file_path}: {e}")
-                results.append({
-                    "original": file_info["name"],
-                    "error": str(e),
-                    "status": "failed"
+                logging.error(f"Translation failed for {subtitle_path.name}: {str(e)}")
+                translated_results.append({
+                    "original_subtitle": str(subtitle_path),
+                    "status": "Failed",
+                    "error": str(e)
                 })
         
-        return {"status": "completed", "results": results}
+        return JSONResponse(content=translated_results)
         
     except Exception as e:
-        logging.error(f"Translation error: {e}")
+        logging.error(f"Translation error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/clear_cache")
