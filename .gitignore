@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+venv/
+
+# Environment
+.env
+
+# Application specific
+temp_uploads/
+translated_subtitles/
+
+# macOS
+.DS_Store

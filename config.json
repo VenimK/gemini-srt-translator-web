@@ -1,0 +1,12 @@
+{
+    "gemini_api_key": "AIzaSyDYFh2FgeuY9Ln8DJB7Lh0I8acNfDFf9PI",
+    "model": "gemini-2.5-flash",
+    "tmdb_api_key": "ff1300f8858d61a550d3815f3ac74ea9",
+    "language": "Dutch",
+    "language_code": "nl",
+    "extract_audio": true,
+    "auto_fetch_tmdb": true,
+    "is_tv_series": false,
+    "add_translator_info": true,
+    "series_title": ""
+}

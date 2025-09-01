@@ -1,0 +1,37 @@
+import os
+import json
+from fastapi.responses import StreamingResponse
+
+async def translate_file(input_file: str, output_file: str, translator):
+    async def event_stream():
+        try:
+            process = await translator.translate_file_stream(input_file, output_file)
+            
+            # Stream stdout
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                line_str = line.decode('utf-8').strip()
+                if line_str:
+                    # Replace backslashes with forward slashes to prevent client-side JSON parsing errors.
+                    safe_message = line_str.replace('\\', '/')
+                    yield f"data: {json.dumps({'type': 'progress', 'file': os.path.basename(input_file), 'message': safe_message})}\n\n"
+
+            # Stream stderr
+            error_output = await process.stderr.read()
+            error_str = error_output.decode('utf-8').strip()
+
+            await process.wait()
+
+            if process.returncode == 0:
+                yield f"data: {json.dumps({'type': 'success', 'file': os.path.basename(input_file), 'output_path': output_file})}\n\n"
+            else:
+                # Also sanitize the error message.
+                safe_error_message = error_str.replace('\\', '/')
+                yield f"data: {json.dumps({'type': 'error', 'file': os.path.basename(input_file), 'message': safe_error_message})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'file': os.path.basename(input_file), 'message': str(e)})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
