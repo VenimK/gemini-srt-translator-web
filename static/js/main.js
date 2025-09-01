@@ -178,26 +178,33 @@ document.addEventListener('DOMContentLoaded', () => {
                 const config = await response.json();
                 geminiApiKeyInput.value = config.gemini_api_key || '';
                 tmdbApiKeyInput.value = config.tmdb_api_key || '';
-                languageInput.value = config.language || 'English';
-                languageCodeInput.value = config.language_code || 'en';
-                extractAudioCheckbox.checked = config.extract_audio || false;
-                autoFetchTmdbCheckbox.checked = config.auto_fetch_tmdb || false;
+                languageInput.value = config.language || '';
+                languageCodeInput.value = config.language_code || '';
+                extractAudioCheckbox.checked = config.extract_audio !== false; // default to true
+                autoFetchTmdbCheckbox.checked = config.auto_fetch_tmdb !== false; // default to true
                 isTvSeriesCheckbox.checked = config.is_tv_series || false;
-                addTranslatorInfoCheckbox.checked = config.add_translator_info || false;
                 seriesTitleInput.value = config.series_title || '';
-                seriesTitleContainer.style.display = isTvSeriesCheckbox.checked ? 'block' : 'none';
+                addTranslatorInfoCheckbox.checked = config.add_translator_info !== false; // default to true
 
-                // Load models and set selected
+                // Set the selected language in the dropdown if it exists
+                if (config.language && config.language_code) {
+                    const option = Array.from(languageSelect.options).find(
+                        opt => opt.value === `${config.language}|${config.language_code}`
+                    );
+                    if (option) {
+                        languageSelect.value = option.value;
+                    } else {
+                        // If not found in the list, select the first option (empty)
+                        languageSelect.value = '';
+                    }
+                }
+
                 await loadModels(config.model);
-
-                logToConsole("Configuration loaded.");
             } else {
-                logToConsole("Error loading configuration.");
-                await loadModels(); // Still try to load models
+                console.error('Failed to load config');
             }
         } catch (error) {
-            logToConsole(`Network error loading configuration: ${error.message}`);
-            await loadModels(); // Still try to load models
+            console.error('Error loading config:', error);
         }
     }
 
@@ -223,6 +230,19 @@ document.addEventListener('DOMContentLoaded', () => {
             logToConsole(`Network error loading models: ${error.message}`);
         }
     }
+
+    // Add language selection handler
+    const languageSelect = document.getElementById('languageSelect');
+    languageSelect.addEventListener('change', (e) => {
+        if (e.target.value) {
+            const [language, code] = e.target.value.split('|');
+            languageInput.value = language;
+            languageCodeInput.value = code;
+        } else {
+            languageInput.value = '';
+            languageCodeInput.value = '';
+        }
+    });
 
     saveConfigBtn.addEventListener('click', async () => {
         const config = {

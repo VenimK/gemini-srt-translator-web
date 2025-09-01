@@ -64,11 +64,31 @@
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="language" class="form-label">Language:</label>
-                                <input type="text" id="language" class="form-control">
+                                <select id="languageSelect" class="form-select">
+                                    <option value="">Select a language...</option>
+                                    <option value="Dutch|nl">Dutch (nl)</option>
+                                    <option value="English|en">English (en)</option>
+                                    <option value="French|fr">French (fr)</option>
+                                    <option value="German|de">German (de)</option>
+                                    <option value="Spanish|es">Spanish (es)</option>
+                                    <option value="Italian|it">Italian (it)</option>
+                                    <option value="Portuguese|pt">Portuguese (pt)</option>
+                                    <option value="Russian|ru">Russian (ru)</option>
+                                    <option value="Japanese|ja">Japanese (ja)</option>
+                                    <option value="Korean|ko">Korean (ko)</option>
+                                    <option value="Chinese (Simplified)|zh-CN">Chinese (Simplified) (zh-CN)</option>
+                                    <option value="Chinese (Traditional)|zh-TW">Chinese (Traditional) (zh-TW)</option>
+                                    <option value="Arabic|ar">Arabic (ar)</option>
+                                    <option value="Hindi|hi">Hindi (hi)</option>
+                                </select>
                             </div>
                             <div class="mb-3">
                                 <label for="languageCode" class="form-label">Language Code:</label>
-                                <input type="text" id="languageCode" class="form-control">
+                                <input type="text" id="languageCode" class="form-control" readonly>
+                            </div>
+                            <div class="mb-3">
+                                <label for="language" class="form-label">Custom Language:</label>
+                                <input type="text" id="language" class="form-control" placeholder="Enter custom language">
                             </div>
                         </div>
                     </div>
