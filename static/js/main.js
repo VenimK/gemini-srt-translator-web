@@ -34,6 +34,56 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let currentMatches = [];
 
+    let ws = null;
+    let clientId = `client-${Math.random().toString(36).substr(2, 9)}`;
+    let currentProgress = {
+        current: 0,
+        total: 100,
+        fileName: ''
+    };
+
+    function initWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/${clientId}`;
+        
+        ws = new WebSocket(wsUrl);
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'progress') {
+                updateProgressBar(data.progress, data.total);
+            }
+        };
+        
+        ws.onclose = () => {
+            console.log('WebSocket disconnected, reconnecting...');
+            setTimeout(initWebSocket, 3000);
+        };
+        
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+    }
+
+    function updateProgressBar(progress, total) {
+        const progressBar = document.getElementById('translationProgress');
+        const progressText = document.getElementById('progressText');
+        
+        if (progressBar && progressText) {
+            const percentage = Math.round((progress / total) * 100);
+            progressBar.style.width = `${percentage}%`;
+            progressBar.setAttribute('aria-valuenow', percentage);
+            progressText.textContent = `${percentage}%`;
+            
+            if (percentage >= 100) {
+                setTimeout(() => {
+                    progressBar.style.width = '0%';
+                    progressText.textContent = '0%';
+                }, 1000);
+            }
+        }
+    }
+
     function showLoading() {
         loadingIndicator.classList.remove('d-none');
     }
@@ -377,7 +427,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/translate/', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(selectedFiles),
+                body: JSON.stringify({
+                    files: selectedFiles,
+                    client_id: clientId
+                }),
             });
 
             console.log('Received translation response:', response);
@@ -427,6 +480,88 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Initial load
+    initWebSocket();
     loadConfig();
     logToConsole("Web GUI loaded. Drag and drop files to start.");
+
+    // Add cache control UI
+    const cacheControl = document.createElement('div');
+    cacheControl.className = 'mt-3';
+    cacheControl.innerHTML = `
+        <button id="clearCacheBtn" class="btn btn-outline-secondary btn-sm">
+            <i class="fas fa-trash-alt"></i> Clear Translation Cache
+        </button>
+        <small class="text-muted ms-2">Clear cached translations to force fresh translations</small>
+    `;
+    
+    const configForm = document.getElementById('configForm');
+    if (configForm) {
+        configForm.appendChild(cacheControl);
+        
+        document.getElementById('clearCacheBtn').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/clear_cache', { method: 'POST' });
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showNotification('Translation cache cleared successfully', 'success');
+                } else {
+                    throw new Error(result.message || 'Failed to clear cache');
+                }
+            } catch (error) {
+                console.error('Error clearing cache:', error);
+                showNotification(`Failed to clear cache: ${error.message}`, 'danger');
+            }
+        });
+    }
+    
+    // Add progress container to the DOM if it doesn't exist
+    if (!document.getElementById('progressContainer')) {
+        const progressContainer = document.createElement('div');
+        progressContainer.id = 'progressContainer';
+        progressContainer.className = 'mt-3';
+        progressContainer.style.display = 'none';
+        progressContainer.innerHTML = `
+            <div class="progress">
+                <div id="translationProgress" class="progress-bar progress-bar-striped progress-bar-animated" 
+                     role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                    <span id="progressText">0%</span>
+                </div>
+            </div>
+            <div id="currentFile" class="small text-muted mt-1"></div>
+        `;
+        
+        const translateBtn = document.getElementById('translateBtn');
+        if (translateBtn) {
+            translateBtn.parentNode.insertBefore(progressContainer, translateBtn.nextSibling);
+        }
+    }
 });
+
+function showAlert(message, type = 'info') {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.role = 'alert';
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    
+    const container = document.querySelector('.container');
+    if (container) {
+        container.insertBefore(alertDiv, container.firstChild);
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+            const bsAlert = new bootstrap.Alert(alertDiv);
+            bsAlert.close();
+        }, 5000);
+    }
+}
+
+function createFormData(files) {
+    const formData = new FormData();
+    files.forEach(file => {
+        formData.append('files', file);
+    });
+    return formData;
+}

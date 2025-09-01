@@ -84,6 +84,43 @@ if model:
 UPLOAD_DIR = Path("temp_uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
+import asyncio
+from fastapi import WebSocket
+from typing import Dict, Set
+from pathlib import Path
+import json
+from backend.translator import Translator
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+        self.tasks: Dict[str, asyncio.Task] = {}
+
+    async def connect(self, websocket: WebSocket, client_id: str):
+        await websocket.accept()
+        self.active_connections[client_id] = websocket
+
+    def disconnect(self, client_id: str):
+        if client_id in self.active_connections:
+            del self.active_connections[client_id]
+        if client_id in self.tasks:
+            self.tasks[client_id].cancel()
+            del self.tasks[client_id]
+
+    async def send_progress(self, client_id: str, progress: int, total: int):
+        if client_id in self.active_connections:
+            try:
+                await self.active_connections[client_id].send_json({
+                    "type": "progress",
+                    "progress": progress,
+                    "total": total
+                })
+            except Exception as e:
+                logging.error(f"Error sending progress to {client_id}: {e}")
+                self.disconnect(client_id)
+
+manager = ConnectionManager()
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
     """Serve the main HTML page."""
@@ -140,56 +177,86 @@ async def get_models():
     ]
     return JSONResponse(content=models)
 
-@app.post("/translate/")
-async def translate_files_endpoint(selected_files: list[dict]):
-    num_files = len(selected_files)
-    logging.info(f"Received translation request for {num_files} files. Starting batch translation...")
-    current_config = config_manager.config
-    translator = Translator(current_config)
-    language_code = current_config.get("language_code", "en")
-    
-    translated_results = []
-    for i, file_pair in enumerate(selected_files):
-        subtitle_path_str = file_pair.get('subtitle')
-        if not subtitle_path_str:
-            continue
-
-        subtitle_path = Path(subtitle_path_str)
-        # Ensure the output directory exists
-        output_dir = UPLOAD_DIR # Use the temp_uploads directory
-        output_dir.mkdir(exist_ok=True)
-
-        output_filename = f"{subtitle_path.stem}.{language_code}{subtitle_path.suffix}"
-        output_path = output_dir / output_filename
+@app.post("/translate")
+async def translate_files_endpoint(request: dict):
+    """
+    Handle file translation with progress tracking.
+    Expected request format:
+    {
+        "files": [{"path": "path/to/file.srt", "name": "file.srt"}],
+        "client_id": "unique_client_id"
+    }
+    """
+    try:
+        files = request.get("files", [])
+        client_id = request.get("client_id")
         
-        logging.info(f"Starting translation for: {subtitle_path.name} ({i + 1}/{num_files})")
-        try:
-            translated_path = await asyncio.to_thread(
-                translator.translate_subtitle, subtitle_path, output_path
-            )
-            if translated_path:
-                logging.info(f"Successfully translated: {subtitle_path.name} ({i + 1}/{num_files})")
-                translated_results.append({
-                    "original_subtitle": subtitle_path_str,
-                    "translated_subtitle": str(translated_path),
-                    "status": "Success"
-                })
-            else:
-                logging.warning(f"Translation returned no path for: {subtitle_path.name} ({i + 1}/{num_files}). It might have failed silently.")
-                translated_results.append({
-                    "original_subtitle": subtitle_path_str,
-                    "status": "Failed"
-                })
-        except Exception as e:
-            logging.error(f"Translation failed for {subtitle_path.name} ({i + 1}/{num_files}): {e}")
-            translated_results.append({
-                "original_subtitle": subtitle_path_str,
-                "status": "Failed",
-                "error": str(e)
-            })
+        if not files:
+            raise HTTPException(status_code=400, detail="No files provided")
+        
+        results = []
+        translator = Translator(config_manager.get_config())
+        
+        for file_info in files:
+            file_path = Path(file_info["path"])
+            output_path = UPLOAD_DIR / f"translated_{file_path.name}"
             
-    logging.info(f"Batch translation completed for {num_files} files.")
-    return JSONResponse(content=translated_results)
+            # Progress callback
+            async def progress_callback(current: int, total: int):
+                if client_id:
+                    await manager.send_progress(client_id, current, total)
+            
+            try:
+                # Wrap sync callback in async
+                def sync_progress(current: int, total: int):
+                    asyncio.create_task(progress_callback(current, total))
+                
+                translator.translate_subtitle(
+                    file_path, 
+                    output_path,
+                    progress_callback=sync_progress
+                )
+                
+                results.append({
+                    "original": file_info["name"],
+                    "translated": output_path.name,
+                    "status": "completed"
+                })
+                
+            except Exception as e:
+                logging.error(f"Error translating {file_path}: {e}")
+                results.append({
+                    "original": file_info["name"],
+                    "error": str(e),
+                    "status": "failed"
+                })
+        
+        return {"status": "completed", "results": results}
+        
+    except Exception as e:
+        logging.error(f"Translation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/clear_cache")
+async def clear_cache():
+    """Clear the translation cache."""
+    try:
+        Translator.clear_cache()
+        return {"status": "success", "message": "Translation cache cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/ws/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    await manager.connect(websocket, client_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Handle any incoming messages if needed
+    except Exception as e:
+        logging.error(f"WebSocket error for {client_id}: {e}")
+    finally:
+        manager.disconnect(client_id)
 
 @app.get("/tmdb/info")
 async def get_tmdb_info(filename: str, series_title: str = None):
