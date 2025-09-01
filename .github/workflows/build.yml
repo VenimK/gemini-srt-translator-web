@@ -74,18 +74,24 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Get version from package.json
-      id: version
-      uses: martinbeentjes/npm-get-version-action@v1.3.1
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
       with:
-        working-directory: './static'
+        node-version: '20'
+    
+    - name: Initialize package version
+      id: version
+      run: |
+        cd static
+        npm init -y
+        echo "version=$(node -p 'require("./package.json").version')" >> $GITHUB_OUTPUT
     
     - name: Create Release
       id: create_release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: v${{ steps.version.outputs.current-version }}
-        name: Release v${{ steps.version.outputs.current-version }}
+        tag_name: v${{ steps.version.outputs.version }}
+        name: Release v${{ steps.version.outputs.version }}
         body: |
           ### Changes
           - Auto-generated release
@@ -110,7 +116,7 @@ jobs:
         
         # Create ZIP file
         cd release
-        zip -r ../gemini-srt-translator-v${{ steps.version.outputs.current-version }}.zip .
+        zip -r ../gemini-srt-translator-v${{ steps.version.outputs.version }}.zip .
         cd ..
     
     - name: Upload Release Asset
@@ -119,6 +125,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./gemini-srt-translator-v${{ steps.version.outputs.current-version }}.zip
-        asset_name: gemini-srt-translator-v${{ steps.version.outputs.current-version }}.zip
+        asset_path: ./gemini-srt-translator-v${{ steps.version.outputs.version }}.zip
+        asset_name: gemini-srt-translator-v${{ steps.version.outputs.version }}.zip
         asset_content_type: application/zip
