@@ -197,6 +197,9 @@ class Translator:
                     # Rebuild the block
                     translated_block = f"{header}\n{translated_text}"
                     translated_blocks.append(translated_block)
+
+                    # Add a small delay to avoid hitting rate limits
+                    await asyncio.sleep(1)
                     
                 except Exception as e:
                     logging.error(f"Error translating block {i + 1}: {str(e)}")
