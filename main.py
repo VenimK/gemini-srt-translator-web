@@ -237,12 +237,9 @@ async def translate_files_endpoint(selected_files: List[Dict[str, str]]):
             logging.info(f"Starting translation for: {subtitle_path.name} ({i + 1}/{len(selected_files)})")
             
             try:
-                # Create a progress reporter with the default client ID
-                progress_reporter = ProgressReporter(manager, "default")
-                
                 # Define progress callback
                 async def progress_callback(current: int, total: int):
-                    await progress_reporter.send_progress("default", current, total)
+                    await manager.send_progress("default", current, total)
                 
                 # Run the translation
                 translated_path = await translator.translate_subtitle(
