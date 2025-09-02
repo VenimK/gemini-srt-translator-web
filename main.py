@@ -212,10 +212,6 @@ async def translate_files_endpoint(selected_files: List[Dict[str, str]]):
         
         current_config = config_manager.config
         translator = Translator(current_config)
-        language_code = current_config.get("language_code", "en")
-        
-        # Create a progress reporter with the default client ID
-        progress_reporter = ProgressReporter(manager, "default")
         
         translated_results = []
         
@@ -231,24 +227,27 @@ async def translate_files_endpoint(selected_files: List[Dict[str, str]]):
 
             subtitle_path = Path(subtitle_path_str)
             output_dir = UPLOAD_DIR
-            output_dir.mkdir(exist_ok=True)
+            output_dir.mkdir(exist_ok=True, parents=True)
             
             # Create output filename with language code
+            language_code = current_config.get("language_code", "en")
             output_filename = f"{subtitle_path.stem}.{language_code}{subtitle_path.suffix}"
             output_path = output_dir / output_filename
             
             logging.info(f"Starting translation for: {subtitle_path.name} ({i + 1}/{len(selected_files)})")
             
             try:
-                # Create a thread-safe progress callback
-                def progress_callback(current: int, total: int):
-                    progress_reporter.report(current, total)
+                # Create a progress reporter with the default client ID
+                progress_reporter = ProgressReporter(manager, "default")
                 
-                # Run the translation in a thread pool
-                translated_path = await asyncio.to_thread(
-                    translator.translate_subtitle,
-                    subtitle_path,
-                    output_path,
+                # Define progress callback
+                async def progress_callback(current: int, total: int):
+                    await progress_reporter.send_progress("default", current, total)
+                
+                # Run the translation
+                translated_path = await translator.translate_subtitle(
+                    subtitle_path=subtitle_path,
+                    output_path=output_path,
                     progress_callback=progress_callback
                 )
                 
@@ -268,9 +267,6 @@ async def translate_files_endpoint(selected_files: List[Dict[str, str]]):
                     "status": "Failed",
                     "error": str(e)
                 })
-            finally:
-                # Clean up the event loop
-                progress_reporter.loop.close()
         
         return JSONResponse(content=translated_results)
         

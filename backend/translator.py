@@ -1,52 +1,68 @@
-import re
+import os
 import json
 import hashlib
 import logging
-import time
-import subprocess
 from pathlib import Path
-from functools import lru_cache
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Dict, Callable, List
 import google.generativeai as genai
+from google.generativeai import types
+import asyncio
 
 class Translator:
     _instance = None
+    _initialized = False
     _cache_file = Path(".translation_cache.json")
-    _cache: Dict[str, str] = {}
+    _cache = {}
     
-    def __new__(cls, config):
+    def __new__(cls, config: Dict):
         if cls._instance is None:
             cls._instance = super(Translator, cls).__new__(cls)
             cls._instance._initialize(config)
-            cls._load_cache()
         return cls._instance
     
-    def _initialize(self, config):
+    def _initialize(self, config: Dict):
+        if self._initialized:
+            return
+            
         self.config = config
-        gemini_api_key = self.config.get("gemini_api_key")
-        if gemini_api_key:
-            genai.configure(api_key=gemini_api_key)
-            self.model = genai.GenerativeModel(self.config.get("model", "gemini-1.5-flash"))
-        else:
-            logging.warning("Gemini API Key not provided. Translation will fail.")
-            self.model = None
+        self._load_cache()
+        
+        # Initialize the Google AI client
+        api_key = os.getenv("GEMINI_API_KEY") or self.config.get("api_key")
+        if not api_key:
+            raise ValueError("No API key provided. Set GEMINI_API_KEY environment variable or provide in config.")
+            
+        genai.configure(api_key=api_key)
+        self.model_name = self.config.get("model", "gemini-2.5-pro")
+        self.model = genai.GenerativeModel(self.model_name)
+        
+        # Configure generation parameters
+        self.generation_config = {
+            "temperature": 0.2,
+            "top_p": 0.8,
+            "top_k": 40,
+            "max_output_tokens": 2048,
+        }
+        
+        self._initialized = True
+        logging.info(f"Initialized translator with model: {self.model_name}")
     
-    @classmethod
-    def _load_cache(cls):
-        try:
-            if cls._cache_file.exists():
-                with open(cls._cache_file, 'r') as f:
-                    cls._cache = json.load(f)
-        except Exception as e:
-            logging.error(f"Failed to load translation cache: {e}")
+    def _load_cache(self):
+        if self._cache_file.exists():
+            try:
+                with open(self._cache_file, 'r', encoding='utf-8') as f:
+                    self._cache = json.load(f)
+                logging.info(f"Loaded {len(self._cache)} translations from cache")
+            except Exception as e:
+                logging.error(f"Failed to load cache: {e}")
+                self._cache = {}
     
-    @classmethod
-    def _save_cache(cls):
+    def _save_cache(self):
         try:
-            with open(cls._cache_file, 'w') as f:
-                json.dump(cls._cache, f, indent=2)
+            with open(self._cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self._cache, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            logging.error(f"Failed to save translation cache: {e}")
+            logging.error(f"Failed to save cache: {e}")
     
     @classmethod
     def clear_cache(cls):
@@ -62,13 +78,13 @@ class Translator:
         """Generate a cache key based on text and current config."""
         key_data = {
             'text': text,
-            'model': self.config.get('model'),
+            'model': self.model_name,
             'language': self.config.get('language'),
             'language_code': self.config.get('language_code')
         }
         return hashlib.md5(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
     
-    def _translate_with_retry(self, text: str, max_retries: int = 3) -> str:
+    async def _translate_with_retry(self, text: str, max_retries: int = 3) -> str:
         """
         Translate text with retry logic for rate limits.
         
@@ -84,23 +100,29 @@ class Translator:
         """
         import time
         import random
-        from google.api_core.exceptions import ResourceExhausted
         
         cache_key = self._get_cache_key(text)
         if cache_key in self._cache:
             return self._cache[cache_key]
         
-        if not self.model:
-            raise ValueError("Model not initialized. Check your API key.")
-            
         last_exception = None
         
         for attempt in range(max_retries):
             try:
-                response = self.model.generate_content(
-                    f"Translate the following text to {self.config.get('language', 'English')}: {text}"
+                # Create a prompt for translation
+                prompt = (
+                    f"Translate the following text to {self.config.get('language', 'English')}. "
+                    "Keep the timing and formatting exactly the same, only translate the text. "
+                    f"Here's the text to translate:\n\n{text}"
                 )
-                translated = response.text
+                
+                # Generate the response
+                response = await self.model.generate_content_async(
+                    contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                    generation_config=types.GenerationConfig(**self.generation_config)
+                )
+                
+                translated = response.text.strip()
                 
                 # Cache the result
                 self._cache[cache_key] = translated
@@ -110,26 +132,22 @@ class Translator:
                 
             except Exception as e:
                 last_exception = e
-                if "429" in str(e) or "quota" in str(e).lower() or "rate limit" in str(e).lower():
-                    # Extract retry delay from error message if available, otherwise use exponential backoff
-                    retry_after = 5 * (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff with jitter
+                error_msg = str(e).lower()
+                if any(x in error_msg for x in ["429", "quota", "rate limit"]):
+                    # Exponential backoff with jitter
+                    retry_after = min(5 * (2 ** attempt) + random.uniform(0, 1), 60)  # Cap at 60 seconds
                     logging.warning(f"Rate limited. Attempt {attempt + 1}/{max_retries}. Retrying in {retry_after:.1f} seconds...")
-                    time.sleep(retry_after)
+                    await asyncio.sleep(retry_after)
                     continue
+                logging.error(f"Translation error: {e}")
                 raise
         
         # If we get here, all retries failed
         logging.error(f"Failed to translate after {max_retries} attempts")
         raise last_exception or Exception("Translation failed")
-
-    def translate_text(self, text: str) -> str:
-        """Translate a single text with caching."""
-        if not text.strip():
-            return text
-            
-        return self._translate_with_retry(text)
     
-    def translate_subtitle(self, subtitle_path: Path, output_path: Path, progress_callback: Optional[Callable[[int, int], None]] = None) -> Path:
+    async def translate_subtitle(self, subtitle_path: Path, output_path: Path, 
+                              progress_callback: Optional[Callable[[int, int], None]] = None) -> Path:
         """
         Translate a subtitle file using the configured model with progress tracking.
         
@@ -174,7 +192,7 @@ class Translator:
                     text = '\n'.join(lines[2:])
                     
                     # Translate the text with retry logic
-                    translated_text = self._translate_with_retry(text)
+                    translated_text = await self._translate_with_retry(text)
                     
                     # Rebuild the block
                     translated_block = f"{header}\n{translated_text}"
