@@ -122,7 +122,12 @@ class Translator:
                     generation_config=types.GenerationConfig(**self.generation_config)
                 )
                 
-                translated = response.text.strip()
+                try:
+                    translated = response.text.strip()
+                except ValueError:
+                    logging.warning(f"Translation failed for block due to safety concerns or empty response. Response: {response}")
+                    # Return original text if translation is blocked or response is empty
+                    return text
                 
                 # Cache the result
                 self._cache[cache_key] = translated
@@ -174,7 +179,7 @@ class Translator:
                 try:
                     # Update progress
                     if progress_callback:
-                        progress_callback(i + 1, total_blocks)
+                        await progress_callback(i + 1, total_blocks)
                     
                     # Skip empty blocks
                     if not block.strip():
