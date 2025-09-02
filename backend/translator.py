@@ -68,96 +68,126 @@ class Translator:
         }
         return hashlib.md5(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
     
+    def _translate_with_retry(self, text: str, max_retries: int = 3) -> str:
+        """
+        Translate text with retry logic for rate limits.
+        
+        Args:
+            text: Text to translate
+            max_retries: Maximum number of retry attempts
+            
+        Returns:
+            Translated text
+            
+        Raises:
+            Exception: If all retry attempts are exhausted
+        """
+        import time
+        import random
+        from google.api_core.exceptions import ResourceExhausted
+        
+        cache_key = self._get_cache_key(text)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        
+        if not self.model:
+            raise ValueError("Model not initialized. Check your API key.")
+            
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                response = self.model.generate_content(
+                    f"Translate the following text to {self.config.get('language', 'English')}: {text}"
+                )
+                translated = response.text
+                
+                # Cache the result
+                self._cache[cache_key] = translated
+                self._save_cache()
+                
+                return translated
+                
+            except Exception as e:
+                last_exception = e
+                if "429" in str(e) or "quota" in str(e).lower() or "rate limit" in str(e).lower():
+                    # Extract retry delay from error message if available, otherwise use exponential backoff
+                    retry_after = 5 * (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff with jitter
+                    logging.warning(f"Rate limited. Attempt {attempt + 1}/{max_retries}. Retrying in {retry_after:.1f} seconds...")
+                    time.sleep(retry_after)
+                    continue
+                raise
+        
+        # If we get here, all retries failed
+        logging.error(f"Failed to translate after {max_retries} attempts")
+        raise last_exception or Exception("Translation failed")
+
     def translate_text(self, text: str) -> str:
         """Translate a single text with caching."""
         if not text.strip():
             return text
             
-        cache_key = self._get_cache_key(text)
-        
-        # Check cache first
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-        
-        # If not in cache, translate
-        if not self.model:
-            raise ValueError("Model not initialized. Check your API key.")
-            
-        try:
-            response = self.model.generate_content(f"Translate the following text to {self.config.get('language', 'English')}: {text}")
-            translated = response.text
-            
-            # Cache the result
-            self._cache[cache_key] = translated
-            self._save_cache()
-            
-            return translated
-        except Exception as e:
-            logging.error(f"Translation error: {e}")
-            raise
+        return self._translate_with_retry(text)
     
     def translate_subtitle(self, subtitle_path: Path, output_path: Path, progress_callback: Optional[Callable[[int, int], None]] = None) -> Path:
         """
-        Translate a subtitle file using the configured model.
+        Translate a subtitle file using the configured model with progress tracking.
         
         Args:
-            subtitle_path: Path to the input subtitle file
-            output_path: Path where the translated subtitle will be saved
-            progress_callback: Optional callback function that takes (current, total) progress
-        
+            subtitle_path: Path to the source SRT file
+            output_path: Path to save the translated SRT file
+            progress_callback: Optional callback function that takes (current, total) as arguments
+            
         Returns:
             Path to the translated subtitle file
         """
         try:
-            # Read the subtitle file
+            # Count total blocks first for progress tracking
             with open(subtitle_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # Split into blocks (assuming each subtitle block is separated by two newlines)
-            blocks = content.split('\n\n')
+            # Split into subtitle blocks (handles both Windows and Unix line endings)
+            blocks = [b.strip() for b in content.replace('\r\n', '\n').split('\n\n') if b.strip()]
             total_blocks = len(blocks)
             
             translated_blocks = []
             
             for i, block in enumerate(blocks):
-                if not block.strip():
-                    translated_blocks.append('')
-                    continue
-                    
-                # Report progress
-                if progress_callback:
-                    progress_callback(i + 1, total_blocks)
-                
-                # Translate the block
                 try:
-                    # Check cache first
-                    cache_key = self._get_cache_key(block)
-                    if cache_key in self._cache:
-                        translated_text = self._cache[cache_key]
-                    else:
-                        # Call the Gemini API for translation
-                        response = self.model.generate_content(
-                            f"Translate the following subtitle text to {self.config.get('language_name', 'English')}. "
-                            "Keep the timing and formatting exactly the same, only translate the text. "
-                            f"Here's the text to translate: {block}"
-                        )
-                        translated_text = response.text
-                        
-                        # Cache the result
-                        self._cache[cache_key] = translated_text
-                        self._save_cache()
+                    # Update progress
+                    if progress_callback:
+                        progress_callback(i + 1, total_blocks)
                     
-                    translated_blocks.append(translated_text)
+                    # Skip empty blocks
+                    if not block.strip():
+                        translated_blocks.append('')
+                        continue
+                        
+                    # Parse the block (simple SRT parser)
+                    lines = [l for l in block.split('\n') if l.strip()]
+                    if len(lines) < 2:  # At least number and timestamp
+                        translated_blocks.append(block)
+                        continue
+                        
+                    # Keep the number and timestamp
+                    header = '\n'.join(lines[:2])
+                    text = '\n'.join(lines[2:])
+                    
+                    # Translate the text with retry logic
+                    translated_text = self._translate_with_retry(text)
+                    
+                    # Rebuild the block
+                    translated_block = f"{header}\n{translated_text}"
+                    translated_blocks.append(translated_block)
                     
                 except Exception as e:
                     logging.error(f"Error translating block {i + 1}: {str(e)}")
-                    # Keep the original text if translation fails
+                    # Keep the original block if translation fails
                     translated_blocks.append(block)
             
-            # Write the translated content to the output file
-            translated_content = '\n\n'.join(translated_blocks)
+            # Write the translated file
             with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(translated_content)
+                f.write('\n\n'.join(translated_blocks))
             
             # Final progress update
             if progress_callback:
