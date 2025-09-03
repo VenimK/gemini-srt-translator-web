@@ -32,27 +32,15 @@ class Translator:
             "temperature": 0.2,
             "top_p": 0.8,
             "top_k": 40,
-            "max_output_tokens": 4000,  # Increased from 2048
+            "max_output_tokens": 4000,
         }
         
         # Add safety settings to handle content filtering
         self.safety_settings = [
-            {
-                "category": "HARM_CATEGORY_HARASSMENT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_HATE_SPEECH",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                "threshold": "BLOCK_NONE"
-            }
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
         ]
         
         # Get API key with clear error message
@@ -65,49 +53,49 @@ class Translator:
         try:
             # Configure with the API key
             logging.info(f"Configuring Google AI with API key (first 8 chars): {api_key[:8]}...")
-            
-            # First configure without listing models to avoid the max_temperature issue
             genai.configure(api_key=api_key)
             
             # Get model name with fallback
-            self.model_name = self.config.get("model", "gemini-2.5-pro")
+            self.model_name = self.config.get("model", "gemini-1.5-flash")
             logging.info(f"Attempting to initialize model: {self.model_name}")
             
-            # Initialize the model directly without listing models first
-            try:
-                # Try with the model name as-is first
-                self.model = genai.GenerativeModel(
-                    model_name=self.model_name,
-                    generation_config=self.generation_config
-                )
-                
-                # Test the model with a simple request
-                response = self.model.generate_content("Test connection")
-                if not response.text:
-                    raise ValueError("Empty response from model")
-                    
-                logging.info(f"Successfully initialized and tested model: {self.model_name}")
-                
-            except Exception as e:
-                logging.error(f"Failed to initialize model {self.model_name}: {str(e)}")
-                # Try with explicit model path
+            # List of models to try in order
+            models_to_try = [
+                self.model_name,
+                f"models/{self.model_name}",
+                "gemini-1.5-flash",  # Fallback 1
+                "gemini-1.5-pro",    # Fallback 2
+                "gemini-pro"          # Fallback 3 (legacy)
+            ]
+            
+            last_error = None
+            
+            for model_name in models_to_try:
                 try:
-                    full_model_name = f"models/{self.model_name}"
-                    logging.info(f"Trying with explicit model path: {full_model_name}")
+                    logging.info(f"Trying model: {model_name}")
                     self.model = genai.GenerativeModel(
-                        model_name=full_model_name,
+                        model_name=model_name,
                         generation_config=self.generation_config
                     )
+                    # Test the model with a simple request
                     response = self.model.generate_content("Test connection")
                     if not response.text:
                         raise ValueError("Empty response from model")
-                    logging.info(f"Successfully initialized with explicit model path")
-                except Exception as inner_e:
-                    logging.error(f"Failed with explicit model path: {inner_e}")
-                    # Fall back to a known working model
-                    self.model_name = "gemini-pro"
-                    logging.info(f"Falling back to model: {self.model_name}")
-                    self.model = genai.GenerativeModel(self.model_name)
+                        
+                    logging.info(f"Successfully initialized model: {model_name}")
+                    self.model_name = model_name  # Update to the working model name
+                    break
+                    
+                except Exception as e:
+                    last_error = e
+                    if "quota" in str(e).lower():
+                        logging.error(f"Quota exceeded for model {model_name}. Please check your Google Cloud Console billing and quotas.")
+                    else:
+                        logging.warning(f"Failed to initialize model {model_name}: {e}")
+                    continue
+            else:
+                # If we've tried all models and none worked
+                raise last_error or Exception("Failed to initialize any model")
             
             self._initialized = True
             logging.info(f"Translator initialized successfully with model: {self.model_name}")
@@ -115,6 +103,11 @@ class Translator:
         except Exception as e:
             error_msg = f"Failed to initialize translator: {str(e)}"
             logging.error(error_msg)
+            if "quota" in str(e).lower():
+                error_msg += "\n\nYou've exceeded your daily quota for the Gemini API. Please check:"
+                error_msg += "\n1. Your Google Cloud Console billing and quotas"
+                error_msg += "\n2. The free tier limits at https://ai.google.dev/gemini-api/docs/rate-limits"
+                error_msg += "\n3. Try again in 24 hours or upgrade your plan"
             raise RuntimeError(error_msg) from e
     
     def _load_cache(self):
