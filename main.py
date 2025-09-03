@@ -74,15 +74,19 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 config_manager = ConfigManager(config_file="config.json")
 
-api_key = config_manager.get('gemini_api_key')
-model = config_manager.get('model')
-if api_key:
-    logging.info(f"Using Gemini API Key: {api_key[:5]}...{api_key[-5:]}")
-if model:
-    logging.info(f"Using Model: {model}")
+# Initialize Translator globally, it will handle its own API key loading
+translator = Translator(config_manager.config)
+
+# Remove direct API key and model logging here, as it's handled by ConfigManager and Translator
+# if config_manager.get('gemini_api_key'):
+#     logging.info(f"Using Gemini API Key: {config_manager.get('gemini_api_key')[:5]}...{config_manager.get('gemini_api_key')[-5:]}")
+# if config_manager.get('model'):
+#     logging.info(f"Using Model: {config_manager.get('model')}")
 
 UPLOAD_DIR = Path("temp_uploads")
+TRANSLATED_DIR = Path("translated_subtitles") # Define TRANSLATED_DIR globally
 UPLOAD_DIR.mkdir(exist_ok=True)
+TRANSLATED_DIR.mkdir(exist_ok=True)
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
@@ -122,6 +126,8 @@ async def get_config():
 async def update_config(new_config: dict):
     config_manager.update(new_config)
     config_manager.save_config()
+    # Re-initialize translator with updated config
+    translator._initialize(config_manager.config)
     logging.info("Configuration updated.")
     return {"message": "Configuration updated successfully"}
 
@@ -139,9 +145,9 @@ async def get_models():
 async def translate_files_endpoint(selected_files: list[dict]):
     num_files = len(selected_files)
     logging.info(f"Received translation request for {num_files} files. Starting batch translation...")
-    current_config = config_manager.config
-    translator = Translator(current_config)
-    language_code = current_config.get("language_code", "en")
+    # The translator instance is already global and updated via /config/
+    # translator = Translator(current_config) # No need to re-instantiate
+    language_code = config_manager.get("language_code", "en")
     
     translated_results = []
     for i, file_pair in enumerate(selected_files):
@@ -151,7 +157,7 @@ async def translate_files_endpoint(selected_files: list[dict]):
 
         subtitle_path = Path(subtitle_path_str)
         # Ensure the output directory exists
-        output_dir = UPLOAD_DIR # Use the temp_uploads directory
+        output_dir = TRANSLATED_DIR
         output_dir.mkdir(exist_ok=True)
 
         output_filename = f"{subtitle_path.stem}.{language_code}{subtitle_path.suffix}"
@@ -159,9 +165,8 @@ async def translate_files_endpoint(selected_files: list[dict]):
         
         logging.info(f"Starting translation for: {subtitle_path.name} ({i + 1}/{num_files})")
         try:
-            translated_path = await asyncio.to_thread(
-                translator.translate_subtitle, subtitle_path, output_path
-            )
+            # Directly await the async function
+            translated_path = await translator.translate_subtitle(subtitle_path, output_path)
             if translated_path:
                 logging.info(f"Successfully translated: {subtitle_path.name} ({i + 1}/{num_files})")
                 translated_results.append({
@@ -170,10 +175,12 @@ async def translate_files_endpoint(selected_files: list[dict]):
                     "status": "Success"
                 })
             else:
-                logging.warning(f"Translation returned no path for: {subtitle_path.name} ({i + 1}/{num_files}). It might have failed silently.")
+                error_message = f"Translation returned no path for: {subtitle_path.name} ({i + 1}/{num_files}). It might have failed silently or 'gst' command was not found/failed."
+                logging.warning(error_message)
                 translated_results.append({
                     "original_subtitle": subtitle_path_str,
-                    "status": "Failed"
+                    "status": "Failed",
+                    "error": error_message
                 })
         except Exception as e:
             logging.error(f"Translation failed for {subtitle_path.name} ({i + 1}/{num_files}): {e}")
@@ -211,17 +218,27 @@ async def stream_logs():
         try:
             while True:
                 log_entry = await q.get()
-                yield f"data: {json.dumps(log_entry)}\n\n"
+                yield f"data: {log_entry}\n\n" # Send raw log_entry string
         finally:
             broadcaster.unsubscribe(q)
     return StreamingResponse(log_generator(), media_type="text/event-stream")
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):
-    file_path = UPLOAD_DIR / filename
+    # Check in TRANSLATED_DIR first, then UPLOAD_DIR as a fallback
+    file_path = TRANSLATED_DIR / filename
+    if not file_path.exists():
+        file_path = UPLOAD_DIR / filename
+
     logging.info(f"Download request for filename: {filename}")
     logging.info(f"Checking for file at path: {file_path.absolute()}")
     logging.info(f"Does file exist? {file_path.exists()}")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found at {file_path.absolute()}")
     return FileResponse(path=file_path, media_type='application/octet-stream', filename=filename)
+
+@app.post("/clear_cache")
+async def clear_cache_endpoint():
+    Translator.clear_cache()
+    logging.info("Translation cache cleared.")
+    return JSONResponse(content={"status": "success", "message": "Translation cache cleared."})

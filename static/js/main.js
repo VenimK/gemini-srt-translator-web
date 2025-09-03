@@ -34,34 +34,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let currentMatches = [];
 
-    let ws = null;
-    let clientId = `client-${Math.random().toString(36).substr(2, 9)}`;
+    let eventSource = null;
+    // let clientId = `client-${Math.random().toString(36).substr(2, 9)}`; // Not needed for SSE
     let currentProgress = {
         current: 0,
         total: 100,
         fileName: ''
     };
 
-    function initWebSocket() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/${clientId}`;
+    function initEventSource() {
+        const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+        const sseUrl = `${protocol}//${window.location.host}/logs/stream/`;
         
-        ws = new WebSocket(wsUrl);
+        eventSource = new EventSource(sseUrl);
         
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.type === 'progress') {
-                updateProgressBar(data.progress, data.total);
-            }
+        eventSource.onmessage = (event) => {
+            const logEntry = JSON.parse(event.data);
+            logToConsole(logEntry);
+            // If you want to update progress bar based on log messages, parse logEntry here
+            // For example, if logEntry contains "Translation progress: 50%"
+            // You would extract the percentage and call updateProgressBar
         };
         
-        ws.onclose = () => {
-            console.log('WebSocket disconnected, reconnecting...');
-            setTimeout(initWebSocket, 3000);
+        eventSource.onopen = () => {
+            console.log('SSE connection opened.');
         };
-        
-        ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
+
+        eventSource.onerror = (error) => {
+            console.error('SSE error:', error);
+            eventSource.close(); // Close current connection
+            console.log('SSE disconnected, reconnecting...');
+            setTimeout(initEventSource, 3000); // Attempt to reconnect after 3 seconds
         };
     }
 
@@ -488,7 +491,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Initial load
-    initWebSocket();
+    initEventSource(); // Call the new function
     loadConfig();
     logToConsole("Web GUI loaded. Drag and drop files to start.");
 

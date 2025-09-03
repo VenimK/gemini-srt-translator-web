@@ -5,6 +5,8 @@ import time
 import hashlib
 from pathlib import Path
 from typing import Dict, Optional, Callable
+import asyncio
+import re # Import re
 
 import google.generativeai as genai
 
@@ -24,10 +26,13 @@ class Translator:
         return cls._instance
     
     def _initialize(self, config: Dict):
-        if self._initialized:
-            return
-            
-        self.config = config
+        # Only set _initialized to True after successful initialization
+        # This allows re-initialization if the first attempt failed or config changed
+        
+        old_api_key = self.config.get("gemini_api_key") if hasattr(self, 'config') else None
+        old_model_name = self.config.get("model") if hasattr(self, 'config') else None
+
+        self.config = config # Always update the config
         self._load_cache()
         
         # Store generation config
@@ -51,38 +56,50 @@ class Translator:
         if not api_key:
             error_msg = "No API key found. Please set GEMINI_API_KEY environment variable or provide in config.json"
             logging.error(error_msg)
-            raise ValueError(error_msg)
+            # Do not raise ValueError here if it's a re-initialization and key is still missing
+            # Instead, set model to None and let translation attempts fail gracefully
+            self.model = None
+            self._initialized = False
+            return
         
-        try:
-            # Initialize the client with the API key
-            logging.info(f"Initializing Gemini client with API key (first 8 chars): {api_key[:8]}...")
-            genai.configure(api_key=api_key)
-            
-            # Get model name with fallback
-            self.model_name = self.config.get("model", "gemini-1.5-flash-latest")
-            logging.info(f"Using model: {self.model_name}")
+        # Only re-configure genai and re-create model if API key or model name has changed
+        new_model_name = self.config.get("model", "gemini-1.5-flash-latest")
+        if api_key != old_api_key or new_model_name != old_model_name or self.model is None:
+            try:
+                # Initialize the client with the API key
+                logging.info(f"Initializing Gemini client with API key (first 8 chars): {api_key[:8]}...")
+                genai.configure(api_key=api_key)
+                
+                # Get model name with fallback
+                self.model_name = new_model_name
+                logging.info(f"Using model: {self.model_name}")
 
-            self.model = genai.GenerativeModel(
-                model_name=self.model_name,
-                safety_settings=self.safety_settings,
-                generation_config=self.generation_config
-            )
-            
-            # Test the connection
-            self._test_connection()
-            
-            self._initialized = True
-            logging.info("Translator initialized successfully")
-            
-        except Exception as e:
-            error_msg = f"Failed to initialize translator: {str(e)}"
-            logging.error(error_msg)
-            if "quota" in str(e).lower():
-                error_msg += "\n\nYou've exceeded your daily quota for the Gemini API."
-                error_msg += "\n1. Wait 24 hours for the quota to reset"
-                error_msg += "\n2. Upgrade your Google Cloud billing plan"
-                error_msg += "\n3. Use a different API key with available quota"
-            raise RuntimeError(error_msg) from e
+                self.model = genai.GenerativeModel(
+                    model_name=self.model_name,
+                    safety_settings=self.safety_settings,
+                    generation_config=self.generation_config
+                )
+                
+                # Test the connection
+                self._test_connection()
+                
+                self._initialized = True
+                logging.info("Translator initialized successfully")
+                
+            except Exception as e:
+                error_msg = f"Failed to initialize translator: {str(e)}"
+                logging.error(error_msg)
+                if "quota" in str(e).lower():
+                    error_msg += "\n\nYou've exceeded your daily quota for the Gemini API."
+                    error_msg += "\n1. Wait 24 hours for the quota to reset"
+                    error_msg += "\n2. Upgrade your Google Cloud billing plan"
+                    error_msg += "\n3. Use a different API key with available quota"
+                self.model = None # Ensure model is None on failure
+                self._initialized = False
+                # Do not re-raise here, let the calling code handle the uninitialized state
+        else:
+            logging.info("Translator already initialized with current config. No re-initialization needed.")
+            self._initialized = True # Ensure it's marked as initialized if no change
     
     def _test_connection(self):
         """Test the connection to the Gemini API"""
@@ -163,61 +180,70 @@ class Translator:
         """
         Translate subtitle file using Gemini API
         """
+        logging.info(f"Translator.translate_subtitle called for {subtitle_path.name}")
         try:
-            with open(subtitle_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Split into subtitle blocks
-            blocks = [b.strip() for b in content.split('\n\n') if b.strip()]
-            total_blocks = len(blocks)
-            translated_blocks = []
-            
-            for i, block in enumerate(blocks):
+            language = self.config.get("language", "English")
+            model_name = self.config.get("model", "gemini-1.5-flash")
+            gemini_api_key = self.config.get("gemini_api_key", "")
+
+            if not gemini_api_key:
+                raise ValueError("Gemini API key is not set.")
+
+            # Using the gemini-srt-translator CLI tool
+            cmd = [
+                "gst", "translate",
+                "-i", str(subtitle_path),
+                "-o", str(output_path),
+                "-l", language,
+                "--model", model_name,
+                "-k", gemini_api_key
+            ]
+
+            logging.info(f"Executing command: {' '.join(cmd)}")
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+
+            # Read stdout and stderr concurrently
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                log_message = line.strip()
+                logging.info(f"GST Output: {log_message}")
                 if progress_callback:
-                    progress_callback(i + 1, total_blocks)
-                
-                # Split block into lines
-                lines = block.split('\n')
-                if len(lines) < 2:  # Skip invalid blocks
-                    translated_blocks.append(block)
-                    continue
-                
-                # Extract index and timestamp
-                index = lines[0]
-                timestamp = lines[1]
-                text = '\n'.join(lines[2:]) if len(lines) > 2 else ''
-                
-                if not text.strip():
-                    translated_blocks.append(block)
-                    continue
-                
-                # Check cache first
-                cache_key = self._get_cache_key(text)
-                if cache_key in self._cache:
-                    translated_text = self._cache[cache_key]
-                else:
-                    # Translate the text
-                    translated_text = await self._translate_text(text)
-                    self._cache[cache_key] = translated_text
-                    self._save_cache()
-                
-                # Rebuild the block
-                translated_block = f"{index}\n{timestamp}\n{translated_text}"
-                translated_blocks.append(translated_block)
+                    # Attempt to parse progress from gst output if available
+                    # This is a placeholder; actual parsing depends on gst's output format
+                    match = re.search(r'Progress: (\\d+)% (\\d+)/(\\d+)', log_message)
+                    if match:
+                        percentage = int(match.group(1))
+                        current = int(match.group(2))
+                        total = int(match.group(3))
+                        progress_callback(current, total) # Pass current and total blocks
+                    else:
+                        # If no specific progress, just pass a generic update
+                        progress_callback(0, 1) # Indicate some activity
             
-            # Write the translated subtitles
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write('\n\n'.join(translated_blocks))
-            
-            if progress_callback:
-                progress_callback(total_blocks, total_blocks)
-                
-            return output_path
-            
+            await process.wait()
+
+            if process.returncode == 0:
+                logging.info(f"GST command completed successfully for {subtitle_path.name}.")
+                return output_path
+            else:
+                error_output = await process.stdout.read() # Read any remaining output
+                logging.error(f"Error translating {subtitle_path.name}. Exit code: {process.returncode}. Output: {error_output}")
+                raise RuntimeError(f"Translation failed for {subtitle_path.name}. Check logs for details.")
+
+        except FileNotFoundError:
+            logging.error("The 'gst' command was not found. Make sure gemini-srt-translator is installed and in your PATH.")
+            raise RuntimeError("The 'gst' command is not available.")
         except Exception as e:
-            logging.error(f"Error in translate_subtitle: {str(e)}")
+            logging.error(f"An error occurred during translation: {e}")
             raise
-    
+
     @classmethod
     def clear_cache(cls):
         """Clear the translation cache."""
