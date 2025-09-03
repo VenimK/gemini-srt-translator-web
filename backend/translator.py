@@ -279,14 +279,27 @@ class Translator:
         """Translate a single piece of text with rate limiting"""
         self._rate_limit()
         try:
-            response = await self.model.generate_content_async(
-                f"Translate this text to {self.config.get('target_language', 'English')}: {text}",
+            # Use the direct API format that matches your working curl command
+            model = self.model_name if self.model_name.startswith('models/') else f'models/{self.model_name}'
+            
+            # Format the request to match the working curl example
+            response = await self.model.client.generate_content(
+                model=model,
+                contents=[{"parts": [{"text": text}]}],
                 generation_config=self.generation_config,
                 safety_settings=self.safety_settings
             )
-            return response.text.strip()
+            
+            # Extract the response text
+            if not response.candidates or not response.candidates[0].content.parts:
+                raise ValueError("Empty response from model")
+                
+            return response.candidates[0].content.parts[0].text.strip()
+            
         except Exception as e:
             logging.error(f"Translation error: {e}")
+            if hasattr(e, 'response') and hasattr(e.response, 'text'):
+                logging.error(f"API Error response: {e.response.text}")
             raise
     
     async def translate_subtitle(self, subtitle_path: Path, output_path: Path, 
