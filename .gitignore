@@ -11,3 +11,5 @@ translated_subtitles/
 
 # macOS
 .DS_Store
+config.json
+config.yaml 

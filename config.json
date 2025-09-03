@@ -1,6 +1,6 @@
 {
     "model": "gemini-2.5-flash",
-    "tmdb_api_key": "TMDB KEY",
+    "tmdb_api_key": "ff1300f8858d61a550d3815f3ac74ea9",
     "language": "Dutch",
     "language_code": "nl",
     "extract_audio": true,
