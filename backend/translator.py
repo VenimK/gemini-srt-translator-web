@@ -4,12 +4,21 @@ import logging
 import time
 import hashlib
 from pathlib import Path
-from typing import Dict, Optional, Callable
+from typing import Dict, Optional, Callable, List, Tuple
 import asyncio
-import re # Import re
+import re
 
 import google.generativeai as genai
 
+class SubtitleBlock:
+    def __init__(self, index: int, start_time: str, end_time: str, text: str):
+        self.index = index
+        self.start_time = start_time
+        self.end_time = end_time
+        self.text = text
+
+    def __str__(self):
+        return f"{self.index}\n{self.start_time} --> {self.end_time}\n{self.text}"
 
 class Translator:
     _instance = None
@@ -17,139 +26,176 @@ class Translator:
     _cache_file = Path(".translation_cache.json")
     _cache = {}
     last_request_time = 0
-    min_request_interval = 6.1  # 10 requests per minute
-    
+    min_request_interval = 1.0  # Reduced for batching, will be handled differently
+
     def __new__(cls, config: Dict):
         if cls._instance is None:
             cls._instance = super(Translator, cls).__new__(cls)
             cls._instance._initialize(config)
         return cls._instance
-    
+
     def _initialize(self, config: Dict):
-        # Only set _initialized to True after successful initialization
-        # This allows re-initialization if the first attempt failed or config changed
-        
         old_api_key = self.config.get("gemini_api_key") if hasattr(self, 'config') else None
         old_model_name = self.config.get("model") if hasattr(self, 'config') else None
 
-        self.config = config # Always update the config
+        self.config = config
         self._load_cache()
-        
-        # Store generation config
+
         self.generation_config = {
             "temperature": 0.2,
             "top_p": 0.8,
             "top_k": 40,
-            "max_output_tokens": 4000,
+            "max_output_tokens": 8192, # Increased for larger batches
         }
-        
-        # Safety settings
+
         self.safety_settings = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
         ]
-        
-        # Get API key with clear error message
-        api_key = os.getenv("GEMINI_API_KEY") or self.config.get("api_key") or self.config.get("gemini_api_key")
+
+        api_key = os.getenv("GEMINI_API_KEY") or self.config.get("gemini_api_key")
         if not api_key:
-            error_msg = "No API key found. Please set GEMINI_API_KEY environment variable or provide in config.json"
-            logging.error(error_msg)
-            # Do not raise ValueError here if it's a re-initialization and key is still missing
-            # Instead, set model to None and let translation attempts fail gracefully
+            logging.error("No API key found.")
             self.model = None
             self._initialized = False
             return
-        
-        # Only re-configure genai and re-create model if API key or model name has changed
+
         new_model_name = self.config.get("model", "gemini-1.5-flash-latest")
-        if api_key != old_api_key or new_model_name != old_model_name or self.model is None:
+        if api_key != old_api_key or new_model_name != old_model_name or not hasattr(self, 'model'):
             try:
-                # Initialize the client with the API key
-                logging.info(f"Initializing Gemini client with API key (first 8 chars): {api_key[:8]}...")
+                logging.info(f"Initializing Gemini client with API key...")
                 genai.configure(api_key=api_key)
-                
-                # Get model name with fallback
                 self.model_name = new_model_name
                 logging.info(f"Using model: {self.model_name}")
-
                 self.model = genai.GenerativeModel(
                     model_name=self.model_name,
                     safety_settings=self.safety_settings,
                     generation_config=self.generation_config
                 )
-                
-                # Test the connection
-                self._test_connection()
-                
                 self._initialized = True
                 logging.info("Translator initialized successfully")
-                
             except Exception as e:
-                error_msg = f"Failed to initialize translator: {str(e)}"
-                logging.error(error_msg)
-                if "quota" in str(e).lower():
-                    error_msg += "\n\nYou've exceeded your daily quota for the Gemini API."
-                    error_msg += "\n1. Wait 24 hours for the quota to reset"
-                    error_msg += "\n2. Upgrade your Google Cloud billing plan"
-                    error_msg += "\n3. Use a different API key with available quota"
-                self.model = None # Ensure model is None on failure
+                logging.error(f"Failed to initialize translator: {e}")
+                self.model = None
                 self._initialized = False
-                # Do not re-raise here, let the calling code handle the uninitialized state
         else:
-            logging.info("Translator already initialized with current config. No re-initialization needed.")
-            self._initialized = True # Ensure it's marked as initialized if no change
-    
-    def _test_connection(self):
-        """Test the connection to the Gemini API"""
-        try:
-            response = self.model.generate_content("Test connection")
-            
-            if not response.candidates or not response.candidates[0].content.parts:
-                raise ValueError("Empty response from model")
-                
-            return True
-            
-        except Exception as e:
-            logging.error(f"Connection test failed: {e}")
-            raise
-    
-    def _rate_limit(self):
-        """Ensure we don't exceed the rate limit of 10 requests per minute"""
+            logging.info("Translator already initialized.")
+            self._initialized = True
+
+    def _parse_srt(self, srt_content: str) -> List[SubtitleBlock]:
+        blocks = []
+        for block_text in srt_content.strip().split('\n\n'):
+            lines = block_text.split('\n')
+            if len(lines) >= 3:
+                try:
+                    index = int(lines[0])
+                    time_line = lines[1]
+                    start_time, end_time = time_line.split(' --> ')
+                    text = '\n'.join(lines[2:])
+                    blocks.append(SubtitleBlock(index, start_time, end_time, text))
+                except (ValueError, IndexError) as e:
+                    logging.warning(f"Could not parse SRT block: {block_text} - Error: {e}")
+        return blocks
+
+    def _reconstruct_srt(self, blocks: List[SubtitleBlock]) -> str:
+        return '\n\n'.join(str(block) for block in blocks)
+
+    async def _translate_batch(self, texts: List[str], target_language: str) -> List[str]:
+        # Simple rate limiting
         now = time.time()
-        time_since_last = now - self.last_request_time
-        
-        if time_since_last < self.min_request_interval:
-            sleep_time = self.min_request_interval - time_since_last
-            logging.debug(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
-            time.sleep(sleep_time)
-        
+        if now - self.last_request_time < self.min_request_interval:
+            await asyncio.sleep(self.min_request_interval - (now - self.last_request_time))
         self.last_request_time = time.time()
-    
-    async def _translate_text(self, text: str) -> str:
-        """Translate a single piece of text with rate limiting"""
-        self._rate_limit()
-        
+
+        # Prepare a batch prompt using JSON
+        input_json = json.dumps({"lines": texts})
+        prompt = f"Translate the 'lines' in the following JSON object to {target_language}. Return a JSON object with a single key 'translated_lines' containing an array of the translated strings. The number of translated strings must match the number of input strings.\n\n{input_json}"
+
         try:
-            # Format the request
-            response = await self.model.generate_content_async(
-                f"Translate this to {self.config.get('target_language', 'English')}: {text}"
-            )
+            response = await self.model.generate_content_async(prompt)
+            response_text = response.candidates[0].content.parts[0].text
             
-            # Extract the response
-            if not response.candidates or not response.candidates[0].content.parts:
-                raise ValueError("Empty response from model")
-                
-            translated_text = response.candidates[0].content.parts[0].text.strip()
-            return translated_text
-            
+            # Extract JSON from the response, handling potential markdown
+            json_match = re.search(r'```json\n(.*)\n```', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+                translated_data = json.loads(json_str)
+                translated_lines = translated_data["translated_lines"]
+                if len(translated_lines) == len(texts):
+                    return translated_lines
+
+            # If JSON parsing fails or line count mismatches, log a warning and fall back
+            logging.warning("Failed to parse JSON response or line count mismatch. Falling back to individual translation.")
+            return [await self._translate_text(text, target_language) for text in texts]
         except Exception as e:
-            logging.error(f"Translation error: {e}")
-            if hasattr(e, 'response') and hasattr(e.response, 'text'):
-                logging.error(f"API Error response: {e.response.text}")
+            logging.error(f"Batch translation error: {e}")
+            # Fallback to individual translation on error
+            return [await self._translate_text(text, target_language) for text in texts]
+
+    async def _translate_text(self, text: str, target_language: str) -> str:
+        """Translate a single piece of text."""
+        try:
+            response = await self.model.generate_content_async(
+                f"Translate this to {target_language}: {text}"
+            )
+            return response.candidates[0].content.parts[0].text.strip()
+        except Exception as e:
+            logging.error(f"Single translation error: {e}")
+            return text # Return original text on failure
+
+    async def _translate_srt_file_natively(self, subtitle_path: Path, output_path: Path, progress_callback: Optional[Callable[[int, int], None]] = None) -> Path:
+        logging.info(f"Starting native translation for {subtitle_path.name}")
+        
+        with open(subtitle_path, 'r', encoding='utf-8-sig') as f:
+            srt_content = f.read()
+        
+        blocks = self._parse_srt(srt_content)
+        if not blocks:
+            logging.warning("No subtitle blocks found to translate.")
+            return subtitle_path
+
+        target_language = self.config.get("language", "English")
+        batch_size = 20  # Translate 20 lines at a time
+        translated_blocks = []
+
+        for i in range(0, len(blocks), batch_size):
+            batch = blocks[i:i+batch_size]
+            texts_to_translate = [block.text for block in batch]
+            
+            translated_texts = await self._translate_batch(texts_to_translate, target_language)
+            
+            for j, block in enumerate(batch):
+                block.text = translated_texts[j]
+                translated_blocks.append(block)
+            
+            if progress_callback:
+                progress_callback(i + len(batch), len(blocks))
+        
+        translated_srt_content = self._reconstruct_srt(translated_blocks)
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(translated_srt_content)
+            
+        logging.info(f"Native translation completed for {subtitle_path.name}")
+        return output_path
+
+    async def translate_subtitle(self, subtitle_path: Path, output_path: Path, progress_callback: Optional[Callable[[int, int], None]] = None) -> Path:
+        """
+        Translate subtitle file using the new native Python implementation.
+        """
+        if not self._initialized:
+            raise RuntimeError("Translator is not initialized. Check API key and configuration.")
+            
+        try:
+            # --- NEW NATIVE IMPLEMENTATION ---
+            return await self._translate_srt_file_natively(subtitle_path, output_path, progress_callback)
+
+        except Exception as e:
+            logging.error(f"An error occurred during native translation: {e}")
             raise
-    
+
     def _load_cache(self):
         if self._cache_file.exists():
             try:
@@ -159,101 +205,23 @@ class Translator:
             except Exception as e:
                 logging.warning(f"Failed to load cache: {e}")
                 self._cache = {}
-    
+
     def _save_cache(self):
         try:
             with open(self._cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self._cache, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logging.warning(f"Failed to save cache: {e}")
-    
-    def _get_cache_key(self, text: str) -> str:
-        key_data = {
-            'text': text,
-            'model': self.model_name,
-            'target_lang': self.config.get('target_language', 'en')
-        }
-        return hashlib.md5(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
-    
-    async def translate_subtitle(self, subtitle_path: Path, output_path: Path, 
-                              progress_callback: Optional[Callable[[int, int], None]] = None) -> Path:
-        """
-        Translate subtitle file using Gemini API
-        """
-        logging.info(f"Translator.translate_subtitle called for {subtitle_path.name}")
-        try:
-            language = self.config.get("language", "English")
-            model_name = self.config.get("model", "gemini-1.5-flash")
-            gemini_api_key = self.config.get("gemini_api_key", "")
-
-            if not gemini_api_key:
-                raise ValueError("Gemini API key is not set.")
-
-            # Using the gemini-srt-translator CLI tool
-            cmd = [
-                "gst", "translate",
-                "-i", str(subtitle_path),
-                "-o", str(output_path),
-                "-l", language,
-                "--model", model_name,
-                "-k", gemini_api_key
-            ]
-
-            logging.info(f"Executing command: {' '.join(cmd)}")
-
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT
-            )
-
-            # Read stdout and stderr concurrently
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
-                log_message = line.decode('utf-8', errors='replace').strip()
-                if log_message:
-                    if progress_callback:
-                        match = re.search(r'(\d+)%\s*\((\d+)/(\d+)\)', log_message)
-                        if match:
-                            current = int(match.group(2))
-                            total = int(match.group(3))
-                            progress_callback(current, total)
-                        else:
-                            logging.info(log_message)
-                    else:
-                        logging.info(log_message)
-            
-            await process.wait()
-
-            if process.returncode == 0:
-                logging.info(f"GST command completed successfully for {subtitle_path.name}.")
-                return output_path
-            else:
-                error_output = await process.stdout.read() # Read any remaining output
-                logging.error(f"Error translating {subtitle_path.name}. Exit code: {process.returncode}. Output: {error_output}")
-                raise RuntimeError(f"Translation failed for {subtitle_path.name}. Check logs for details.")
-
-        except FileNotFoundError:
-            logging.error("The 'gst' command was not found. Make sure gemini-srt-translator is installed and in your PATH.")
-            raise RuntimeError("The 'gst' command is not available.")
-        except Exception as e:
-            logging.error(f"An error occurred during translation: {e}")
-            raise
 
     @classmethod
     def clear_cache(cls):
-        """Clear the translation cache."""
         cls._cache = {}
-        try:
-            if cls._cache_file.exists():
+        if hasattr(cls, '_cache_file') and cls._cache_file.exists():
+            try:
                 cls._cache_file.unlink()
-        except Exception as e:
-            logging.error(f"Failed to clear cache file: {e}")
-    
-    
-    
+            except Exception as e:
+                logging.error(f"Failed to clear cache file: {e}")
+
     def __del__(self):
-        # Save cache on cleanup
-        self._save_cache()
+        if hasattr(self, '_cache'):
+            self._save_cache()

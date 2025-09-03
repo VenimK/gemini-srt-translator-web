@@ -6,7 +6,6 @@
     <title>Gemini SRT Translator</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
@@ -20,7 +19,8 @@
 
     <div class="container-fluid mt-4">
         <div class="row">
-            <div class="col-md-6">
+            <!-- Left Column: File Management -->
+            <div class="col-md-7">
                 <div id="drop-area" class="drop-area mb-3">
                     <p>Drag & Drop files or folders here, or click to browse</p>
                     <input type="file" id="fileInput" multiple webkitdirectory directory style="display: none;">
@@ -43,95 +43,99 @@
                         </tbody>
                     </table>
                 </div>
+            </div>
 
-                <div class="config-section">
+            <!-- Right Column: Configuration, Actions, and Output -->
+            <div class="col-md-5">
+                <div class="config-section mb-3">
                     <h2><i class="fas fa-cogs"></i> Configuration</h2>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="geminiApiKey" class="form-label">Gemini API Key:</label>
-                                <input type="password" id="geminiApiKey" class="form-control">
-                            </div>
-                            <div class="mb-3">
-                                <label for="model" class="form-label">Model:</label>
-                                <select id="model" class="form-select">
-                                </select>
-                            </div>
-                            <div class="mb-3">
-                                <label for="tmdbApiKey" class="form-label">TMDB API Key (optional):</label>
-                                <input type="password" id="tmdbApiKey" class="form-control">
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="mb-3">
-                                <label for="language" class="form-label">Language:</label>
-                                <select id="languageSelect" class="form-select">
-                                    <option value="">Select a language...</option>
-                                    <option value="Dutch|nl">Dutch (nl)</option>
-                                    <option value="English|en">English (en)</option>
-                                    <option value="French|fr">French (fr)</option>
-                                    <option value="German|de">German (de)</option>
-                                    <option value="Spanish|es">Spanish (es)</option>
-                                    <option value="Italian|it">Italian (it)</option>
-                                    <option value="Portuguese|pt">Portuguese (pt)</option>
-                                    <option value="Russian|ru">Russian (ru)</option>
-                                    <option value="Japanese|ja">Japanese (ja)</option>
-                                    <option value="Korean|ko">Korean (ko)</option>
-                                    <option value="Chinese (Simplified)|zh-CN">Chinese (Simplified) (zh-CN)</option>
-                                    <option value="Chinese (Traditional)|zh-TW">Chinese (Traditional) (zh-TW)</option>
-                                    <option value="Arabic|ar">Arabic (ar)</option>
-                                    <option value="Hindi|hi">Hindi (hi)</option>
-                                </select>
-                            </div>
-                            <div class="mb-3">
-                                <label for="languageCode" class="form-label">Language Code:</label>
-                                <input type="text" id="languageCode" class="form-control" readonly>
-                            </div>
-                            <div class="mb-3">
-                                <label for="language" class="form-label">Custom Language:</label>
-                                <input type="text" id="language" class="form-control" placeholder="Enter custom language">
-                            </div>
-                        </div>
+                    <div class="mb-3">
+                        <label for="geminiApiKey" class="form-label">Gemini API Key:</label>
+                        <input type="password" id="geminiApiKey" class="form-control">
                     </div>
-                    <div class="row">
-                        <div class="col-12">
-                            <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" id="extractAudio">
-                                <label class="form-check-label" for="extractAudio">Extract Audio</label>
-                            </div>
-                            <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" id="autoFetchTmdb">
-                                <label class="form-check-label" for="autoFetchTmdb">Auto-fetch TMDB</label>
-                            </div>
-                            <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" id="isTvSeries">
-                                <label class="form-check-label" for="isTvSeries">Is TV Series</label>
-                            </div>
-                            <div class="mb-3" id="seriesTitleContainer" style="display: none;">
-                                <label for="seriesTitle" class="form-label">Series Title:</label>
-                                <input type="text" id="seriesTitle" class="form-control">
-                            </div>
-                            <div class="form-check form-switch mb-2">
-                                <input class="form-check-input" type="checkbox" id="addTranslatorInfo">
-                                <label class="form-check-label" for="addTranslatorInfo">Add Translator Info</label>
-                            </div>
-                        </div>
+                    <div class="mb-3">
+                        <label for="model" class="form-label">Model:</label>
+                        <select id="model" class="form-select"></select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="tmdbApiKey" class="form-label">TMDB API Key (optional):</label>
+                        <input type="password" id="tmdbApiKey" class="form-control">
+                    </div>
+                    <div class="mb-3">
+                        <label for="language" class="form-label">Language:</label>
+                        <select id="languageSelect" class="form-select">
+                            <option value="">Select a language...</option>
+                            <option value="Dutch|nl">Dutch (nl)</option>
+                            <option value="English|en">English (en)</option>
+                            <option value="French|fr">French (fr)</option>
+                            <option value="German|de">German (de)</option>
+                            <option value="Spanish|es">Spanish (es)</option>
+                            <option value="Italian|it">Italian (it)</option>
+                            <option value="Portuguese|pt">Portuguese (pt)</option>
+                            <option value="Russian|ru">Russian (ru)</option>
+                            <option value="Japanese|ja">Japanese (ja)</option>
+                            <option value="Korean|ko">Korean (ko)</option>
+                            <option value="Chinese (Simplified)|zh-CN">Chinese (Simplified) (zh-CN)</option>
+                            <option value="Chinese (Traditional)|zh-TW">Chinese (Traditional) (zh-TW)</option>
+                            <option value="Arabic|ar">Arabic (ar)</option>
+                            <option value="Hindi|hi">Hindi (hi)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="languageCode" class="form-label">Language Code:</label>
+                        <input type="text" id="languageCode" class="form-control" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label for="language" class="form-label">Custom Language:</label>
+                        <input type="text" id="language" class="form-control" placeholder="Enter custom language">
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="extractAudio">
+                        <label class="form-check-label" for="extractAudio">Extract Audio</label>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="autoFetchTmdb">
+                        <label class="form-check-label" for="autoFetchTmdb">Auto-fetch TMDB</label>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="isTvSeries">
+                        <label class="form-check-label" for="isTvSeries">Is TV Series</label>
+                    </div>
+                    <div class="mb-3" id="seriesTitleContainer" style="display: none;">
+                        <label for="seriesTitle" class="form-label">Series Title:</label>
+                        <input type="text" id="seriesTitle" class="form-control">
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="addTranslatorInfo">
+                        <label class="form-check-label" for="addTranslatorInfo">Add Translator Info</label>
                     </div>
                     <div class="button-group">
                         <button id="saveConfigBtn" class="btn btn-primary"><i class="fas fa-save"></i> Save Configuration</button>
                     </div>
                 </div>
-            </div>
-            <div class="col-md-6">
-                <div class="button-group mb-3">
-                    <button id="fetchTmdbBtn" class="btn btn-info"><i class="fas fa-film"></i> Fetch TMDB Info (First File)</button>
-                    <button id="translateBtn" class="btn btn-success"><i class="fas fa-globe"></i> TRANSLATE</button>
+
+                <div class="action-section mb-3">
+                    <h2><i class="fas fa-play"></i> Actions</h2>
+                    <div class="button-group mb-3">
+                        <button id="fetchTmdbBtn" class="btn btn-info"><i class="fas fa-film"></i> Fetch TMDB Info</button>
+                        <button id="translateBtn" class="btn btn-success"><i class="fas fa-globe"></i> TRANSLATE</button>
+                    </div>
                 </div>
 
                 <div id="loading-indicator" class="d-none">
                     <div class="spinner-border text-primary" role="status">
                         <span class="visually-hidden">Loading...</span>
                     </div>
+                </div>
+
+                <div id="progressContainer" class="mb-3" style="display: none;">
+                    <div class="progress">
+                        <div id="translationProgress" class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                            <span id="progressText">0%</span>
+                        </div>
+                    </div>
+                    <div id="currentFile" class="small text-muted mt-1"></div>
                 </div>
 
                 <div class="tmdb-info" id="tmdb-info" style="display: none;">
@@ -147,38 +151,22 @@
                 <div class="console" id="console">
                     <p>Console output will appear here...</p>
                 </div>
-            </div>
-        </div>
-    </div>
 
-    <div class="container mt-4">
-        <div id="progressContainer" class="mb-3" style="display: none;">
-            <div class="progress">
-                <div id="translationProgress" class="progress-bar progress-bar-striped progress-bar-animated" 
-                     role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-                    <span id="progressText">0%</span>
-                </div>
-            </div>
-            <div id="currentFile" class="small text-muted mt-1"></div>
-        </div>
-
-        <div id="translationResults" class="mt-3">
-            <!-- Results will be added here dynamically -->
-        </div>
-
-        <div class="mt-4">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0"><i class="fas fa-cog"></i> Advanced Settings</h5>
-                </div>
-                <div class="card-body">
-                    <div class="d-flex align-items-center">
-                        <button id="clearCacheBtn" class="btn btn-outline-secondary">
-                            <i class="fas fa-trash-alt"></i> Clear Translation Cache
-                        </button>
-                        <small class="text-muted ms-2">
-                            Clear cached translations to force fresh translations (useful if you've updated your API key)
-                        </small>
+                <div class="mt-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="fas fa-cog"></i> Advanced Settings</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="d-flex align-items-center">
+                                <button id="clearCacheBtn" class="btn btn-outline-secondary">
+                                    <i class="fas fa-trash-alt"></i> Clear Translation Cache
+                                </button>
+                                <small class="text-muted ms-2">
+                                    Clear cached translations to force fresh translations
+                                </small>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
