@@ -27,25 +27,74 @@ class Translator:
         self.config = config
         self._load_cache()
         
-        # Initialize the Google AI client
-        api_key = os.getenv("GEMINI_API_KEY") or self.config.get("api_key")
+        # Get API key with clear error message
+        api_key = os.getenv("GEMINI_API_KEY") or self.config.get("api_key") or self.config.get("gemini_api_key")
         if not api_key:
-            raise ValueError("No API key provided. Set GEMINI_API_KEY environment variable or provide in config.")
+            error_msg = "No API key found. Please set GEMINI_API_KEY environment variable or provide in config.json"
+            logging.error(error_msg)
+            raise ValueError(error_msg)
+        
+        try:
+            # Configure with the API key
+            logging.info(f"Configuring Google AI with API key (first 8 chars): {api_key[:8]}...")
+            genai.configure(api_key=api_key)
             
-        genai.configure(api_key=api_key)
-        self.model_name = self.config.get("model", "gemini-2.5-pro")
-        self.model = genai.GenerativeModel(self.model_name)
-        
-        # Configure generation parameters
-        self.generation_config = {
-            "temperature": 0.2,
-            "top_p": 0.8,
-            "top_k": 40,
-            "max_output_tokens": 2048,
-        }
-        
-        self._initialized = True
-        logging.info(f"Initialized translator with model: {self.model_name}")
+            # Get model name
+            self.model_name = self.config.get("model", "gemini-2.5-pro")
+            logging.info(f"Attempting to initialize model: {self.model_name}")
+            
+            # List available models for debugging
+            try:
+                models = genai.list_models()
+                available_models = [m.name for m in models]
+                logging.info(f"Available models: {', '.join(available_models)}")
+                
+                if f"models/{self.model_name}" not in available_models:
+                    logging.warning(f"Model {self.model_name} not found in available models")
+                    
+            except Exception as e:
+                logging.warning(f"Could not list available models: {e}")
+            
+            # Initialize the model
+            try:
+                self.model = genai.GenerativeModel(self.model_name)
+                # Test the model with a simple request
+                response = self.model.generate_content("Test connection")
+                if not response.text:
+                    raise ValueError("Empty response from model")
+                    
+                logging.info(f"Successfully initialized and tested model: {self.model_name}")
+                
+            except Exception as e:
+                logging.error(f"Failed to initialize model {self.model_name}: {str(e)}")
+                # Try with explicit model path
+                try:
+                    full_model_name = f"models/{self.model_name}"
+                    logging.info(f"Trying with explicit model path: {full_model_name}")
+                    self.model = genai.GenerativeModel(full_model_name)
+                    response = self.model.generate_content("Test connection")
+                    if not response.text:
+                        raise ValueError("Empty response from model")
+                    logging.info(f"Successfully initialized with explicit model path")
+                except Exception as inner_e:
+                    logging.error(f"Failed with explicit model path: {inner_e}")
+                    raise
+            
+            # Configure generation parameters
+            self.generation_config = {
+                "temperature": 0.2,
+                "top_p": 0.8,
+                "top_k": 40,
+                "max_output_tokens": 2048,
+            }
+            
+            self._initialized = True
+            logging.info(f"Translator initialized successfully with model: {self.model_name}")
+            
+        except Exception as e:
+            error_msg = f"Failed to initialize translator: {str(e)}"
+            logging.error(error_msg)
+            raise RuntimeError(error_msg) from e
     
     def _load_cache(self):
         if self._cache_file.exists():
