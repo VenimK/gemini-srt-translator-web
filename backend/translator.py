@@ -27,6 +27,14 @@ class Translator:
         self.config = config
         self._load_cache()
         
+        # Store generation config as instance variable
+        self.generation_config = {
+            "temperature": 0.2,
+            "top_p": 0.8,
+            "top_k": 40,
+            "max_output_tokens": 2048,
+        }
+        
         # Get API key with clear error message
         api_key = os.getenv("GEMINI_API_KEY") or self.config.get("api_key") or self.config.get("gemini_api_key")
         if not api_key:
@@ -50,12 +58,7 @@ class Translator:
                 # Try with the model name as-is first
                 self.model = genai.GenerativeModel(
                     model_name=self.model_name,
-                    generation_config={
-                        "temperature": 0.2,
-                        "top_p": 0.8,
-                        "top_k": 40,
-                        "max_output_tokens": 2048,
-                    }
+                    generation_config=self.generation_config
                 )
                 
                 # Test the model with a simple request
@@ -73,12 +76,7 @@ class Translator:
                     logging.info(f"Trying with explicit model path: {full_model_name}")
                     self.model = genai.GenerativeModel(
                         model_name=full_model_name,
-                        generation_config={
-                            "temperature": 0.2,
-                            "top_p": 0.8,
-                            "top_k": 40,
-                            "max_output_tokens": 2048,
-                        }
+                        generation_config=self.generation_config
                     )
                     response = self.model.generate_content("Test connection")
                     if not response.text:
