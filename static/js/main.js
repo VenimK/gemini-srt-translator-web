@@ -49,11 +49,30 @@ document.addEventListener('DOMContentLoaded', () => {
         eventSource = new EventSource(sseUrl);
         
         eventSource.onmessage = (event) => {
-            const logEntry = JSON.parse(event.data);
-            logToConsole(logEntry);
-            // If you want to update progress bar based on log messages, parse logEntry here
-            // For example, if logEntry contains "Translation progress: 50%"
-            // You would extract the percentage and call updateProgressBar
+            try {
+                const logData = JSON.parse(event.data);
+                if (logData.type === 'progress') { // This is for file-level progress
+                    logToConsole(logData.message);
+                } else if (logData.type === 'translation_progress') {
+                    const files_done = logData.current_file - 1;
+                    const progress_of_current_file = logData.current_chunk / logData.total_chunks;
+                    const total_progress = (files_done + progress_of_current_file) / logData.total_files;
+                    
+                    const percentage = Math.round(total_progress * 100);
+
+                    const progressBar = document.getElementById('translationProgress');
+                    const progressText = document.getElementById('progressText');
+                    progressBar.style.width = `${percentage}%`;
+                    progressBar.setAttribute('aria-valuenow', percentage);
+                    progressText.textContent = `${percentage}%`;
+
+                    document.getElementById('currentFile').textContent = `Translating: ${logData.filename} (${logData.current_chunk}/${logData.total_chunks})`;
+                } else {
+                    logToConsole(event.data);
+                }
+            } catch (e) {
+                logToConsole(event.data);
+            }
         };
         
         eventSource.onopen = () => {
@@ -435,6 +454,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         logToConsole(`Initiating translation for ${selectedFiles.length} file(s)...`);
         showLoading();
+        document.getElementById('progressContainer').style.display = 'block';
+        document.getElementById('currentFile').textContent = '';
+        updateProgressBar(0, selectedFiles.length);
 
         try {
             console.log('Sending translation request for:', selectedFiles);
@@ -487,6 +509,9 @@ document.addEventListener('DOMContentLoaded', () => {
             logToConsole(`<span class="text-danger">Error: ${error.message}</span>`);
         } finally {
             hideLoading();
+            setTimeout(() => {
+                document.getElementById('progressContainer').style.display = 'none';
+            }, 2000);
         }
     });
 

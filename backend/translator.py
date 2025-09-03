@@ -212,20 +212,18 @@ class Translator:
                 line = await process.stdout.readline()
                 if not line:
                     break
-                log_message = line.strip()
-                logging.info(f"GST Output: {log_message}")
-                if progress_callback:
-                    # Attempt to parse progress from gst output if available
-                    # This is a placeholder; actual parsing depends on gst's output format
-                    match = re.search(r'Progress: (\\d+)% (\\d+)/(\\d+)', log_message)
-                    if match:
-                        percentage = int(match.group(1))
-                        current = int(match.group(2))
-                        total = int(match.group(3))
-                        progress_callback(current, total) # Pass current and total blocks
+                log_message = line.decode('utf-8', errors='replace').strip()
+                if log_message:
+                    if progress_callback:
+                        match = re.search(r'(\d+)%\s*\((\d+)/(\d+)\)', log_message)
+                        if match:
+                            current = int(match.group(2))
+                            total = int(match.group(3))
+                            progress_callback(current, total)
+                        else:
+                            logging.info(log_message)
                     else:
-                        # If no specific progress, just pass a generic update
-                        progress_callback(0, 1) # Indicate some activity
+                        logging.info(log_message)
             
             await process.wait()
 

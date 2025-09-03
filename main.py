@@ -64,7 +64,7 @@ logging.basicConfig(level=logging.INFO,
                     handlers=[logging.StreamHandler()])
 
 queue_handler = AppLogHandler(broadcaster)
-queue_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+queue_handler.setFormatter(logging.Formatter('%(message)s'))
 logging.getLogger().addHandler(queue_handler)
 # --- End Logging Setup ---
 
@@ -163,10 +163,29 @@ async def translate_files_endpoint(selected_files: list[dict]):
         output_filename = f"{subtitle_path.stem}.{language_code}{subtitle_path.suffix}"
         output_path = output_dir / output_filename
         
-        logging.info(f"Starting translation for: {subtitle_path.name} ({i + 1}/{num_files})")
+        progress_data = {
+            "type": "progress",
+            "message": f"Starting translation for: {subtitle_path.name} ({i + 1}/{num_files})",
+            "current": i + 1,
+            "total": num_files,
+            "filename": subtitle_path.name
+        }
+        logging.info(json.dumps(progress_data))
+
+        def progress_callback(current_chunk, total_chunks):
+            progress_data = {
+                "type": "translation_progress",
+                "current_file": i + 1,
+                "total_files": num_files,
+                "filename": subtitle_path.name,
+                "current_chunk": current_chunk,
+                "total_chunks": total_chunks
+            }
+            logging.info(json.dumps(progress_data))
+
         try:
             # Directly await the async function
-            translated_path = await translator.translate_subtitle(subtitle_path, output_path)
+            translated_path = await translator.translate_subtitle(subtitle_path, output_path, progress_callback=progress_callback)
             if translated_path:
                 logging.info(f"Successfully translated: {subtitle_path.name} ({i + 1}/{num_files})")
                 translated_results.append({
