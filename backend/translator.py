@@ -59,14 +59,19 @@ class Translator:
             self.model_name = self.config.get("model", "gemini-1.5-flash")
             logging.info(f"Attempting to initialize model: {self.model_name}")
             
-            # List of models to try in order
+            # List of models to try in order (most preferred first)
             models_to_try = [
                 self.model_name,
                 f"models/{self.model_name}",
-                "gemini-1.5-flash",  # Fallback 1
-                "gemini-1.5-pro",    # Fallback 2
-                "gemini-pro"          # Fallback 3 (legacy)
+                "gemini-1.5-flash",  # Default fallback 1
+                "models/gemini-1.5-flash",
+                "gemini-1.5-pro",    # Default fallback 2
+                "models/gemini-1.5-pro"
             ]
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            models_to_try = [m for m in models_to_try if not (m in seen or seen.add(m))]
             
             last_error = None
             
@@ -88,14 +93,21 @@ class Translator:
                     
                 except Exception as e:
                     last_error = e
-                    if "quota" in str(e).lower():
-                        logging.error(f"Quota exceeded for model {model_name}. Please check your Google Cloud Console billing and quotas.")
+                    error_msg = str(e).lower()
+                    if "quota" in error_msg:
+                        logging.error(f"Quota exceeded for model {model_name}")
+                        break  # No point trying other models if quota is exceeded
+                    elif "not found" in error_msg or "not supported" in error_msg:
+                        logging.warning(f"Model {model_name} not available")
                     else:
                         logging.warning(f"Failed to initialize model {model_name}: {e}")
                     continue
             else:
                 # If we've tried all models and none worked
-                raise last_error or Exception("Failed to initialize any model")
+                error_msg = "No available models could be initialized. "
+                if last_error:
+                    error_msg += f"Last error: {last_error}"
+                raise RuntimeError(error_msg)
             
             self._initialized = True
             logging.info(f"Translator initialized successfully with model: {self.model_name}")
