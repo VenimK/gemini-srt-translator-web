@@ -5,7 +5,7 @@ requests>=2.26.0,<3.0.0
 python-dotenv>=1.0.0,<2.0.0
 aiofiles>=23.2.1
 certifi>=2024.7.4
-google-generativeai>=0.7.0,<0.8.0
+google-genai>=1.32.0,<2.0.0
 
 # Test dependencies
 pytest>=7.0.0,<8.0.0

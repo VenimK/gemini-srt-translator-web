@@ -6,8 +6,8 @@ import hashlib
 from pathlib import Path
 from typing import Dict, Optional, Callable
 
-from google import genai
-from google.genai.types import Content, Part
+import google.generativeai as genai
+
 
 class Translator:
     _instance = None
@@ -56,11 +56,17 @@ class Translator:
         try:
             # Initialize the client with the API key
             logging.info(f"Initializing Gemini client with API key (first 8 chars): {api_key[:8]}...")
-            self.client = genai.Client(api_key=api_key)
+            genai.configure(api_key=api_key)
             
             # Get model name with fallback
-            self.model_name = self.config.get("model", "gemini-2.5-flash")
+            self.model_name = self.config.get("model", "gemini-1.5-flash-latest")
             logging.info(f"Using model: {self.model_name}")
+
+            self.model = genai.GenerativeModel(
+                model_name=self.model_name,
+                safety_settings=self.safety_settings,
+                generation_config=self.generation_config
+            )
             
             # Test the connection
             self._test_connection()
@@ -81,12 +87,7 @@ class Translator:
     def _test_connection(self):
         """Test the connection to the Gemini API"""
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=[{"role": "user", "parts": [{"text": "Test connection"}]}],
-                generation_config=self.generation_config,
-                safety_settings=self.safety_settings
-            )
+            response = self.model.generate_content("Test connection")
             
             if not response.candidates or not response.candidates[0].content.parts:
                 raise ValueError("Empty response from model")
@@ -115,14 +116,8 @@ class Translator:
         
         try:
             # Format the request
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=[{
-                    "role": "user",
-                    "parts": [{"text": f"Translate this to {self.config.get('target_language', 'English')}: {text}"}]
-                }],
-                generation_config=self.generation_config,
-                safety_settings=self.safety_settings
+            response = await self.model.generate_content_async(
+                f"Translate this to {self.config.get('target_language', 'English')}: {text}"
             )
             
             # Extract the response
@@ -233,10 +228,7 @@ class Translator:
         except Exception as e:
             logging.error(f"Failed to clear cache file: {e}")
     
-    @classmethod
-    def get_models(cls):
-        """Return a list of supported model names."""
-        return ["gemini-pro", "gemini-1.5-flash", "gemini-2.5-flash"]
+    
     
     def __del__(self):
         # Save cache on cleanup
