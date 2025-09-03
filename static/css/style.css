@@ -96,7 +96,6 @@ h2 {
 /* Console */
 .console {
     background-color: #1e1e1e;
-    color: #00ff00;
     border-radius: 5px;
     padding: 15px;
     height: 250px; /* Increased height */
@@ -106,6 +105,18 @@ h2 {
     margin-top: 20px;
     border: 1px solid #444;
 }
+
+.console p {
+    margin: 0 0 5px;
+    display: flex;
+    align-items: center;
+}
+
+.log-info { color: #bbbbbb; }
+.log-success { color: #66bb6a; }
+.log-warning { color: #ffcc80; }
+.log-error { color: #ef9a9a; }
+
 
 /* Forms */
 .form-label {

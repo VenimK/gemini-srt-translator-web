@@ -35,12 +35,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentMatches = [];
 
     let eventSource = null;
-    // let clientId = `client-${Math.random().toString(36).substr(2, 9)}`; // Not needed for SSE
-    let currentProgress = {
-        current: 0,
-        total: 100,
-        fileName: ''
-    };
 
     function initEventSource() {
         const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
@@ -51,59 +45,57 @@ document.addEventListener('DOMContentLoaded', () => {
         eventSource.onmessage = (event) => {
             try {
                 const logData = JSON.parse(event.data);
-                if (logData.type === 'progress') { // This is for file-level progress
-                    logToConsole(logData.message);
-                } else if (logData.type === 'translation_progress') {
-                    const files_done = logData.current_file - 1;
-                    const progress_of_current_file = logData.current_chunk / logData.total_chunks;
-                    const total_progress = (files_done + progress_of_current_file) / logData.total_files;
-                    
-                    const percentage = Math.round(total_progress * 100);
-
-                    const progressBar = document.getElementById('translationProgress');
-                    const progressText = document.getElementById('progressText');
-                    progressBar.style.width = `${percentage}%`;
-                    progressBar.setAttribute('aria-valuenow', percentage);
-                    progressText.textContent = `${percentage}%`;
-
-                    document.getElementById('currentFile').textContent = `Translating: ${logData.filename} (${logData.current_chunk}/${logData.total_chunks})`;
+                if (logData.type === 'log') {
+                    logToConsole(logData.message, logData.level);
+                } else if (logData.type === 'progress' || logData.type === 'translation_progress') {
+                    updateProgressBarFromData(logData);
                 } else {
-                    logToConsole(event.data);
+                    logToConsole(event.data, 'info');
                 }
             } catch (e) {
-                logToConsole(event.data);
+                logToConsole(event.data, 'error');
             }
         };
         
         eventSource.onopen = () => {
             console.log('SSE connection opened.');
+            logToConsole('Connected to server for real-time updates.', 'success');
         };
 
         eventSource.onerror = (error) => {
             console.error('SSE error:', error);
-            eventSource.close(); // Close current connection
-            console.log('SSE disconnected, reconnecting...');
-            setTimeout(initEventSource, 3000); // Attempt to reconnect after 3 seconds
+            logToConsole('Connection to server lost. Please refresh the page.', 'error');
+            eventSource.close();
         };
     }
 
-    function updateProgressBar(progress, total) {
+    function updateProgressBarFromData(logData) {
+        let percentage = 0;
+        let currentFileText = '';
+
+        if (logData.type === 'progress') {
+            const files_done = logData.current -1;
+            percentage = Math.round((files_done / logData.total) * 100);
+            currentFileText = `Starting: ${logData.filename}`;
+            if (logData.message) {
+                logToConsole(logData.message, 'info');
+            }
+            updateFileStatusByName(logData.filename, 'Translating...', 'bg-info');
+
+        } else if (logData.type === 'translation_progress') {
+            const files_done = logData.current_file - 1;
+            const progress_of_current_file = logData.current_chunk / logData.total_chunks;
+            const total_progress = (files_done + progress_of_current_file) / logData.total_files;
+            percentage = Math.round(total_progress * 100);
+            currentFileText = `Translating: ${logData.filename} (${logData.current_chunk}/${logData.total_chunks})`;
+        }
+
         const progressBar = document.getElementById('translationProgress');
         const progressText = document.getElementById('progressText');
-        
-        if (progressBar && progressText) {
-            const percentage = Math.round((progress / total) * 100);
-            progressBar.style.width = `${percentage}%`;
-            progressBar.setAttribute('aria-valuenow', percentage);
-            progressText.textContent = `${percentage}%`;
-            
-            if (percentage >= 100) {
-                setTimeout(() => {
-                    progressBar.style.width = '0%';
-                    progressText.textContent = '0%';
-                }, 1000);
-            }
-        }
+        progressBar.style.width = `${percentage}%`;
+        progressBar.setAttribute('aria-valuenow', percentage);
+        progressText.textContent = `${percentage}%`;
+        document.getElementById('currentFile').textContent = currentFileText;
     }
 
     function showLoading() {
@@ -127,9 +119,34 @@ document.addEventListener('DOMContentLoaded', () => {
         notificationToast.show();
     }
 
-    function logToConsole(message) {
+    function logToConsole(message, level = 'info') {
         const p = document.createElement('p');
-        p.innerHTML = message; // Use innerHTML to render potential HTML tags
+        const icon = document.createElement('i');
+        
+        p.classList.add(`log-${level}`);
+        icon.classList.add('fas', 'me-2');
+
+        switch (level) {
+            case 'success':
+                icon.classList.add('fa-check-circle');
+                break;
+            case 'warning':
+                icon.classList.add('fa-exclamation-triangle');
+                break;
+            case 'error':
+                icon.classList.add('fa-times-circle');
+                break;
+            case 'info':
+            default:
+                icon.classList.add('fa-info-circle');
+                break;
+        }
+        
+        p.appendChild(icon);
+        const messageNode = document.createElement('span');
+        messageNode.innerHTML = message;
+        p.appendChild(messageNode);
+        
         consoleOutput.appendChild(p);
         consoleOutput.scrollTop = consoleOutput.scrollHeight;
     }
@@ -177,17 +194,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (response.ok) {
                 currentMatches = await response.json();
                 displayFileMatches(currentMatches);
-                logToConsole(`Successfully processed ${files.length} files.`);
+                logToConsole(`Successfully processed ${files.length} files.`, 'success');
                 showNotification('Files uploaded and processed successfully!');
             } else {
                 const errorData = await response.json();
                 const errorMessage = `Error processing files: ${errorData.detail || response.statusText}`;
-                logToConsole(errorMessage);
+                logToConsole(errorMessage, 'error');
                 showNotification(errorMessage, true);
             }
         } catch (error) {
             const errorMessage = `Network error processing files: ${error.message}`;
-            logToConsole(errorMessage);
+            logToConsole(errorMessage, 'error');
             showNotification(errorMessage, true);
         } finally {
             hideLoading();
@@ -202,10 +219,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         matches.forEach((match, index) => {
-            const row = fileListBody.insertRow(index); // Set the index here
+            const row = fileListBody.insertRow();
             row.dataset.index = index;
-            row.classList.add('file-item-row');
+            row.dataset.filename = match.subtitle ? match.subtitle.split('/').pop() : '-';
 
+            // Checkbox
             const checkboxCell = row.insertCell();
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
@@ -213,33 +231,36 @@ document.addEventListener('DOMContentLoaded', () => {
             checkbox.checked = true;
             checkboxCell.appendChild(checkbox);
 
+            // Subtitle File
             const subtitleCell = row.insertCell();
-            subtitleCell.textContent = match.subtitle ? match.subtitle.split('/').pop() : '-';
+            subtitleCell.innerHTML = `<i class="fas fa-closed-captioning me-2"></i> ${row.dataset.filename}`;
 
+            // Video File
             const videoCell = row.insertCell();
-            videoCell.textContent = match.video ? match.video.split('/').pop() : '-';
+            videoCell.innerHTML = match.video ? `<i class="fas fa-video me-2"></i> ${match.video.split('/').pop()}` : '-';
 
+            // Status
             const statusCell = row.insertCell();
-            statusCell.innerHTML = `<span class="badge bg-secondary">${match.status || 'Matched'}</span>`;
+            statusCell.innerHTML = `<span class="badge bg-secondary">Ready</span>`;
 
-            const actionCell = row.insertCell(); // Create a cell for actions
-            actionCell.innerHTML = ''; // Initially empty
-
-            row.addEventListener('click', (e) => {
-                if (e.target.type !== 'checkbox' && !e.target.closest('a')) { // Also check if the click is not on a link
-                    checkbox.checked = !checkbox.checked;
-                }
-                row.classList.toggle('table-active', checkbox.checked);
-            });
-            row.classList.toggle('table-active', checkbox.checked);
+            // Action
+            const actionCell = row.insertCell();
+            actionCell.innerHTML = '';
         });
+    }
+    
+    function updateFileStatusByName(filename, status, badgeClass) {
+        const row = fileListBody.querySelector(`tr[data-filename="${filename}"]`);
+        if (row) {
+            const statusCell = row.cells[3];
+            statusCell.innerHTML = `<span class="badge ${badgeClass}">${status}</span>`;
+        }
     }
 
     selectAllCheckbox.addEventListener('change', () => {
         const checkboxes = fileListBody.querySelectorAll('input[type="checkbox"]');
         checkboxes.forEach(checkbox => {
             checkbox.checked = selectAllCheckbox.checked;
-            checkbox.closest('tr').classList.toggle('table-active', checkbox.checked);
         });
     });
 
@@ -252,31 +273,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 tmdbApiKeyInput.value = config.tmdb_api_key || '';
                 languageInput.value = config.language || '';
                 languageCodeInput.value = config.language_code || '';
-                extractAudioCheckbox.checked = config.extract_audio !== false; // default to true
-                autoFetchTmdbCheckbox.checked = config.auto_fetch_tmdb !== false; // default to true
+                extractAudioCheckbox.checked = config.extract_audio !== false;
+                autoFetchTmdbCheckbox.checked = config.auto_fetch_tmdb !== false;
                 isTvSeriesCheckbox.checked = config.is_tv_series || false;
                 seriesTitleInput.value = config.series_title || '';
-                addTranslatorInfoCheckbox.checked = config.add_translator_info !== false; // default to true
+                addTranslatorInfoCheckbox.checked = config.add_translator_info !== false;
 
-                // Set the selected language in the dropdown if it exists
                 if (config.language && config.language_code) {
                     const option = Array.from(languageSelect.options).find(
                         opt => opt.value === `${config.language}|${config.language_code}`
                     );
-                    if (option) {
-                        languageSelect.value = option.value;
-                    } else {
-                        // If not found in the list, select the first option (empty)
-                        languageSelect.value = '';
-                    }
+                    if (option) languageSelect.value = option.value;
                 }
 
                 await loadModels(config.model);
             } else {
-                console.error('Failed to load config');
+                logToConsole('Failed to load config', 'error');
             }
         } catch (error) {
-            console.error('Error loading config:', error);
+            logToConsole(`Error loading config: ${error.message}`, 'error');
         }
     }
 
@@ -296,14 +311,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     modelSelect.appendChild(option);
                 });
             } else {
-                logToConsole('Error loading models.');
+                logToConsole('Error loading models.', 'error');
             }
         } catch (error) {
-            logToConsole(`Network error loading models: ${error.message}`);
+            logToConsole(`Network error loading models: ${error.message}`, 'error');
         }
     }
 
-    // Add language selection handler
     const languageSelect = document.getElementById('languageSelect');
     languageSelect.addEventListener('change', (e) => {
         if (e.target.value) {
@@ -339,17 +353,17 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (response.ok) {
-                logToConsole("Configuration saved successfully!");
+                logToConsole("Configuration saved successfully!", 'success');
                 showNotification('Configuration saved!');
             } else {
                 const errorData = await response.json();
                 const errorMessage = `Error saving configuration: ${errorData.detail || response.statusText}`;
-                logToConsole(errorMessage);
+                logToConsole(errorMessage, 'error');
                 showNotification(errorMessage, true);
             }
         } catch (error) {
             const errorMessage = `Network error saving configuration: ${error.message}`;
-            logToConsole(errorMessage);
+            logToConsole(errorMessage, 'error');
             showNotification(errorMessage, true);
         } finally {
             hideLoading();
@@ -375,10 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showLoading();
 
         try {
-            const params = new URLSearchParams({
-                filename,
-                is_tv_series: isTvSeries,
-            });
+            const params = new URLSearchParams({ filename, is_tv_series: isTvSeries });
             if (isTvSeries && seriesTitle) {
                 params.append('series_title', seriesTitle);
             }
@@ -401,49 +412,36 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else {
                         tmdbPosterImg.style.display = 'none';
                     }
-                    logToConsole(`TMDB Info fetched for: ${tmdbInfo.title}`);
+                    logToConsole(`TMDB Info fetched for: ${tmdbInfo.title}`, 'success');
                     showNotification('TMDB info fetched successfully!');
                 } else {
                     tmdbInfoDiv.style.display = 'none';
-                    logToConsole("No TMDB info found for this file.");
+                    logToConsole("No TMDB info found for this file.", 'warning');
                     showNotification('No TMDB info found.', true);
                 }
             } else {
                 const errorData = await response.json();
                 const errorMessage = `Error fetching TMDB info: ${errorData.detail || response.statusText}`;
-                logToConsole(errorMessage);
+                logToConsole(errorMessage, 'error');
                 showNotification(errorMessage, true);
-                tmdbInfoDiv.style.display = 'none';
             }
         } catch (error) {
             const errorMessage = `Network error fetching TMDB info: ${error.message}`;
-            logToConsole(errorMessage);
+            logToConsole(errorMessage, 'error');
             showNotification(errorMessage, true);
-            tmdbInfoDiv.style.display = 'none';
         } finally {
             hideLoading();
         }
     });
 
     translateBtn.addEventListener('click', async () => {
-        console.log('Translate button clicked.');
-
         const selectedFiles = [];
         const selectedIndices = [];
         
-        // Get all checked checkboxes
         fileListBody.querySelectorAll('input[type="checkbox"]:checked').forEach(checkbox => {
             const row = checkbox.closest('tr');
             const rowIndex = row.dataset.index;
-            const fileData = currentMatches[rowIndex];
-            
-            // Create the file object in the expected format
-            const fileObj = {
-                subtitle: fileData.path || fileData.subtitle,
-                video: fileData.video || ''
-            };
-            
-            selectedFiles.push(fileObj);
+            selectedFiles.push(currentMatches[rowIndex]);
             selectedIndices.push(rowIndex);
         });
 
@@ -456,46 +454,40 @@ document.addEventListener('DOMContentLoaded', () => {
         showLoading();
         document.getElementById('progressContainer').style.display = 'block';
         document.getElementById('currentFile').textContent = '';
-        updateProgressBar(0, selectedFiles.length);
+        updateProgressBarFromData({type: 'progress', current: 0, total: selectedFiles.length, filename: ''});
 
         try {
-            console.log('Sending translation request for:', selectedFiles);
             const response = await fetch('/translate/', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(selectedFiles)
             });
 
-            console.log('Received translation response:', response);
-
             if (response.ok) {
                 const results = await response.json();
-                logToConsole("<strong>Translation Results:</strong>");
-                console.log('Translation results received:', results);
+                logToConsole("<strong>Translation Results:</strong>", 'success');
                 
                 results.forEach((result, i) => {
                     const originalName = result.original_subtitle ? result.original_subtitle.split('/').pop() : 'Unknown';
                     const translatedName = result.translated_subtitle ? result.translated_subtitle.split('/').pop() : 'N/A';
-                    const statusBadge = result.status === 'Success' ? 'bg-success' : 'bg-danger';
                     
-                    logToConsole(`- <strong>${originalName}</strong> -> ${translatedName} <span class="badge ${statusBadge}">${result.status}</span>`);
-
-                    // Update the UI to show the translated file
                     const originalIndex = selectedIndices[i];
                     const row = fileListBody.querySelector(`tr[data-index='${originalIndex}']`);
-                    if (row) {
-                        const statusCell = row.cells[3];
-                        statusCell.innerHTML = `<span class="badge ${statusBadge}">${result.status}</span>`;
-                        
-                        if (result.status === 'Success' && result.translated_subtitle) {
-                            const downloadBtn = document.createElement('a');
-                            downloadBtn.href = `/download/${result.translated_subtitle.split('/').pop()}`;
-                            downloadBtn.className = 'btn btn-sm btn-success';
-                            downloadBtn.innerHTML = '<i class="fas fa-download"></i> Download';
-                            statusCell.appendChild(document.createElement('br'));
-                            statusCell.appendChild(downloadBtn);
-                        }
+
+                    if (result.status === 'Success') {
+                        updateFileStatusByName(originalName, 'Complete', 'bg-success');
+                        const actionCell = row.cells[4];
+                        const downloadBtn = document.createElement('a');
+                        downloadBtn.href = `/download/${translatedName}`;
+                        downloadBtn.className = 'btn btn-sm btn-success';
+                        downloadBtn.innerHTML = '<i class="fas fa-download"></i> Download';
+                        actionCell.innerHTML = ''; // Clear previous content
+                        actionCell.appendChild(downloadBtn);
+                    } else {
+                        updateFileStatusByName(originalName, 'Failed', 'bg-danger');
                     }
+
+                    logToConsole(`- <strong>${originalName}</strong> -> ${translatedName} <span class="badge bg-${result.status === 'Success' ? 'success' : 'danger'}">${result.status}</span>`, 'info');
                 });
                 
                 showNotification("Translation completed successfully!");
@@ -504,9 +496,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(`Server responded with status ${response.status}: ${error}`);
             }
         } catch (error) {
-            console.error('Translation error:', error);
+            logToConsole(`Translation error: ${error.message}`, 'error');
             showNotification(`Translation failed: ${error.message}`, true);
-            logToConsole(`<span class="text-danger">Error: ${error.message}</span>`);
         } finally {
             hideLoading();
             setTimeout(() => {
@@ -516,11 +507,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Initial load
-    initEventSource(); // Call the new function
+    initEventSource();
     loadConfig();
     logToConsole("Web GUI loaded. Drag and drop files to start.");
 
-    // Add cache control UI
     const clearCacheBtn = document.getElementById('clearCacheBtn');
     if (clearCacheBtn) {
         clearCacheBtn.addEventListener('click', async () => {
@@ -529,64 +519,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 const result = await response.json();
                 if (result.status === 'success') {
                     showNotification('Translation cache cleared successfully!');
+                    logToConsole('Translation cache cleared.', 'success');
                 } else {
                     throw new Error(result.message || 'Failed to clear cache');
                 }
             } catch (error) {
-                console.error('Error clearing cache:', error);
+                logToConsole(`Error clearing cache: ${error.message}`, 'error');
                 showNotification(`Failed to clear cache: ${error.message}`, true);
             }
         });
     }
-    
-    // Add progress container to the DOM if it doesn't exist
-    if (!document.getElementById('progressContainer')) {
-        const progressContainer = document.createElement('div');
-        progressContainer.id = 'progressContainer';
-        progressContainer.className = 'mt-3';
-        progressContainer.style.display = 'none';
-        progressContainer.innerHTML = `
-            <div class="progress">
-                <div id="translationProgress" class="progress-bar progress-bar-striped progress-bar-animated" 
-                     role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-                    <span id="progressText">0%</span>
-                </div>
-            </div>
-            <div id="currentFile" class="small text-muted mt-1"></div>
-        `;
-        
-        const translateBtn = document.getElementById('translateBtn');
-        if (translateBtn) {
-            translateBtn.parentNode.insertBefore(progressContainer, translateBtn.nextSibling);
-        }
-    }
 });
-
-function showAlert(message, type = 'info') {
-    const alertDiv = document.createElement('div');
-    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
-    alertDiv.role = 'alert';
-    alertDiv.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    `;
-    
-    const container = document.querySelector('.container');
-    if (container) {
-        container.insertBefore(alertDiv, container.firstChild);
-        
-        // Auto-dismiss after 5 seconds
-        setTimeout(() => {
-            const bsAlert = new bootstrap.Alert(alertDiv);
-            bsAlert.close();
-        }, 5000);
-    }
-}
-
-function createFormData(files) {
-    const formData = new FormData();
-    files.forEach(file => {
-        formData.append('files', file);
-    });
-    return formData;
-}

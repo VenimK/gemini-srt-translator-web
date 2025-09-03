@@ -17,6 +17,22 @@ from backend.translator import Translator
 from backend.tmdb_helper import TMDBHelper
 
 # --- Logging Setup ---
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        log_data = {
+            "type": "log",
+            "level": record.levelname.lower(),
+            "message": record.getMessage()
+        }
+        # For progress updates, the message is already a JSON string
+        if record.levelname == "PROGRESS":
+            try:
+                return record.getMessage()
+            except json.JSONDecodeError:
+                pass # Fallback to standard logging
+        
+        return json.dumps(log_data)
+
 class LogBroadcaster:
     def __init__(self):
         self._lock = threading.Lock()
@@ -53,19 +69,26 @@ class AppLogHandler(logging.Handler):
     def __init__(self, broadcaster: LogBroadcaster):
         super().__init__()
         self.broadcaster = broadcaster
+        self.setFormatter(JsonFormatter())
 
     def emit(self, record):
         log_entry = self.format(record)
         self.broadcaster.add_log(log_entry)
 
+# Add a custom log level for progress
+logging.PROGRESS = 25
+logging.addLevelName(logging.PROGRESS, "PROGRESS")
+
+# Configure root logger for terminal output
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S',
                     handlers=[logging.StreamHandler()])
 
-queue_handler = AppLogHandler(broadcaster)
-queue_handler.setFormatter(logging.Formatter('%(message)s'))
-logging.getLogger().addHandler(queue_handler)
+# Get the root logger and add our custom handler for the web UI
+root_logger = logging.getLogger()
+root_logger.addHandler(AppLogHandler(broadcaster))
+
 # --- End Logging Setup ---
 
 app = FastAPI()
@@ -73,18 +96,10 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 config_manager = ConfigManager(config_file="config.json")
-
-# Initialize Translator globally, it will handle its own API key loading
 translator = Translator(config_manager.config)
 
-# Remove direct API key and model logging here, as it's handled by ConfigManager and Translator
-# if config_manager.get('gemini_api_key'):
-#     logging.info(f"Using Gemini API Key: {config_manager.get('gemini_api_key')[:5]}...{config_manager.get('gemini_api_key')[-5:]}")
-# if config_manager.get('model'):
-#     logging.info(f"Using Model: {config_manager.get('model')}")
-
 UPLOAD_DIR = Path("temp_uploads")
-TRANSLATED_DIR = Path("translated_subtitles") # Define TRANSLATED_DIR globally
+TRANSLATED_DIR = Path("translated_subtitles")
 UPLOAD_DIR.mkdir(exist_ok=True)
 TRANSLATED_DIR.mkdir(exist_ok=True)
 
@@ -126,15 +141,12 @@ async def get_config():
 async def update_config(new_config: dict):
     config_manager.update(new_config)
     config_manager.save_config()
-    # Re-initialize translator with updated config
     translator._initialize(config_manager.config)
     logging.info("Configuration updated.")
     return {"message": "Configuration updated successfully"}
 
 @app.get("/models/")
 async def get_models():
-    # In a real application, you might get this from the Gemini API
-    # For now, we'll use a static list of common models.
     models = [
         "gemini-2.5-flash",
         "gemini-2.5-pro",
@@ -145,8 +157,6 @@ async def get_models():
 async def translate_files_endpoint(selected_files: list[dict]):
     num_files = len(selected_files)
     logging.info(f"Received translation request for {num_files} files. Starting batch translation...")
-    # The translator instance is already global and updated via /config/
-    # translator = Translator(current_config) # No need to re-instantiate
     language_code = config_manager.get("language_code", "en")
     
     translated_results = []
@@ -156,10 +166,8 @@ async def translate_files_endpoint(selected_files: list[dict]):
             continue
 
         subtitle_path = Path(subtitle_path_str)
-        # Ensure the output directory exists
         output_dir = TRANSLATED_DIR
         output_dir.mkdir(exist_ok=True)
-
         output_filename = f"{subtitle_path.stem}.{language_code}{subtitle_path.suffix}"
         output_path = output_dir / output_filename
         
@@ -170,7 +178,7 @@ async def translate_files_endpoint(selected_files: list[dict]):
             "total": num_files,
             "filename": subtitle_path.name
         }
-        logging.info(json.dumps(progress_data))
+        logging.log(logging.PROGRESS, json.dumps(progress_data))
 
         def progress_callback(current_chunk, total_chunks):
             progress_data = {
@@ -181,10 +189,9 @@ async def translate_files_endpoint(selected_files: list[dict]):
                 "current_chunk": current_chunk,
                 "total_chunks": total_chunks
             }
-            logging.info(json.dumps(progress_data))
+            logging.log(logging.PROGRESS, json.dumps(progress_data))
 
         try:
-            # Directly await the async function
             translated_path = await translator.translate_subtitle(subtitle_path, output_path, progress_callback=progress_callback)
             if translated_path:
                 logging.info(f"Successfully translated: {subtitle_path.name} ({i + 1}/{num_files})")
@@ -194,7 +201,7 @@ async def translate_files_endpoint(selected_files: list[dict]):
                     "status": "Success"
                 })
             else:
-                error_message = f"Translation returned no path for: {subtitle_path.name} ({i + 1}/{num_files}). It might have failed silently or 'gst' command was not found/failed."
+                error_message = f"Translation returned no path for: {subtitle_path.name} ({i + 1}/{num_files})."
                 logging.warning(error_message)
                 translated_results.append({
                     "original_subtitle": subtitle_path_str,
@@ -215,7 +222,7 @@ async def translate_files_endpoint(selected_files: list[dict]):
 @app.get("/tmdb/info")
 async def get_tmdb_info(filename: str, series_title: str = None):
     tmdb_api_key = config_manager.get("tmdb_api_key")
-    language_code = config_manager.get("language_code", "en-US") # Default to en-US if not found
+    language_code = config_manager.get("language_code", "en-US")
     if not tmdb_api_key:
         raise HTTPException(status_code=400, detail="TMDB API key not configured.")
 
@@ -223,7 +230,6 @@ async def get_tmdb_info(filename: str, series_title: str = None):
     try:
         season, episode = tmdb_helper._extract_season_episode(filename)
         is_tv_series = season is not None and episode is not None
-
         info = tmdb_helper.get_media_info_from_filename(filename, is_tv_series, series_title)
         return JSONResponse(content=info)
     except Exception as e:
@@ -237,21 +243,17 @@ async def stream_logs():
         try:
             while True:
                 log_entry = await q.get()
-                yield f"data: {log_entry}\n\n" # Send raw log_entry string
+                yield f"data: {log_entry}\n\n"
         finally:
             broadcaster.unsubscribe(q)
     return StreamingResponse(log_generator(), media_type="text/event-stream")
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):
-    # Check in TRANSLATED_DIR first, then UPLOAD_DIR as a fallback
     file_path = TRANSLATED_DIR / filename
     if not file_path.exists():
         file_path = UPLOAD_DIR / filename
 
-    logging.info(f"Download request for filename: {filename}")
-    logging.info(f"Checking for file at path: {file_path.absolute()}")
-    logging.info(f"Does file exist? {file_path.exists()}")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found at {file_path.absolute()}")
     return FileResponse(path=file_path, media_type='application/octet-stream', filename=filename)
