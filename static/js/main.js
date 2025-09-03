@@ -521,31 +521,20 @@ document.addEventListener('DOMContentLoaded', () => {
     logToConsole("Web GUI loaded. Drag and drop files to start.");
 
     // Add cache control UI
-    const cacheControl = document.createElement('div');
-    cacheControl.className = 'mt-3';
-    cacheControl.innerHTML = `
-        <button id="clearCacheBtn" class="btn btn-outline-secondary btn-sm">
-            <i class="fas fa-trash-alt"></i> Clear Translation Cache
-        </button>
-        <small class="text-muted ms-2">Clear cached translations to force fresh translations</small>
-    `;
-    
-    const configForm = document.getElementById('configForm');
-    if (configForm) {
-        configForm.appendChild(cacheControl);
-        
-        document.getElementById('clearCacheBtn').addEventListener('click', async () => {
+    const clearCacheBtn = document.getElementById('clearCacheBtn');
+    if (clearCacheBtn) {
+        clearCacheBtn.addEventListener('click', async () => {
             try {
                 const response = await fetch('/clear_cache', { method: 'POST' });
                 const result = await response.json();
                 if (result.status === 'success') {
-                    showNotification('Translation cache cleared successfully', 'success');
+                    showNotification('Translation cache cleared successfully!');
                 } else {
                     throw new Error(result.message || 'Failed to clear cache');
                 }
             } catch (error) {
                 console.error('Error clearing cache:', error);
-                showNotification(`Failed to clear cache: ${error.message}`, 'danger');
+                showNotification(`Failed to clear cache: ${error.message}`, true);
             }
         });
     }

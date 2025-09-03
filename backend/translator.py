@@ -26,7 +26,7 @@ class Translator:
     _cache_file = Path(".translation_cache.json")
     _cache = {}
     last_request_time = 0
-    min_request_interval = 1.0  # Reduced for batching, will be handled differently
+    min_request_interval = 0.5  # Reduced for concurrent requests
 
     def __new__(cls, config: Dict):
         if cls._instance is None:
@@ -45,7 +45,7 @@ class Translator:
             "temperature": 0.2,
             "top_p": 0.8,
             "top_k": 40,
-            "max_output_tokens": 8192, # Increased for larger batches
+            "max_output_tokens": 8192,
         }
 
         self.safety_settings = [
@@ -100,16 +100,12 @@ class Translator:
         return blocks
 
     def _reconstruct_srt(self, blocks: List[SubtitleBlock]) -> str:
-        return '\n\n'.join(str(block) for block in blocks)
+        # Sort blocks by index before reconstructing
+        blocks.sort(key=lambda b: b.index if b else 0)
+        return '\n\n'.join(str(block) for block in blocks if block)
 
     async def _translate_batch(self, texts: List[str], target_language: str) -> List[str]:
-        # Simple rate limiting
-        now = time.time()
-        if now - self.last_request_time < self.min_request_interval:
-            await asyncio.sleep(self.min_request_interval - (now - self.last_request_time))
-        self.last_request_time = time.time()
-
-        # Prepare a batch prompt using JSON
+        # Rate limiting is now handled by the semaphore in the calling function
         input_json = json.dumps({"lines": texts})
         prompt = f"Translate the 'lines' in the following JSON object to {target_language}. Return a JSON object with a single key 'translated_lines' containing an array of the translated strings. The number of translated strings must match the number of input strings.\n\n{input_json}"
 
@@ -117,7 +113,6 @@ class Translator:
             response = await self.model.generate_content_async(prompt)
             response_text = response.candidates[0].content.parts[0].text
             
-            # Extract JSON from the response, handling potential markdown
             json_match = re.search(r'```json\n(.*)\n```', response_text, re.DOTALL)
             if json_match:
                 json_str = json_match.group(1)
@@ -126,16 +121,13 @@ class Translator:
                 if len(translated_lines) == len(texts):
                     return translated_lines
 
-            # If JSON parsing fails or line count mismatches, log a warning and fall back
-            logging.warning("Failed to parse JSON response or line count mismatch. Falling back to individual translation.")
+            logging.warning("JSON response issue. Falling back.")
             return [await self._translate_text(text, target_language) for text in texts]
         except Exception as e:
             logging.error(f"Batch translation error: {e}")
-            # Fallback to individual translation on error
             return [await self._translate_text(text, target_language) for text in texts]
 
     async def _translate_text(self, text: str, target_language: str) -> str:
-        """Translate a single piece of text."""
         try:
             response = await self.model.generate_content_async(
                 f"Translate this to {target_language}: {text}"
@@ -143,10 +135,10 @@ class Translator:
             return response.candidates[0].content.parts[0].text.strip()
         except Exception as e:
             logging.error(f"Single translation error: {e}")
-            return text # Return original text on failure
+            return text
 
     async def _translate_srt_file_natively(self, subtitle_path: Path, output_path: Path, progress_callback: Optional[Callable[[int, int], None]] = None) -> Path:
-        logging.info(f"Starting native translation for {subtitle_path.name}")
+        logging.info(f"Starting native concurrent translation for {subtitle_path.name}")
         
         with open(subtitle_path, 'r', encoding='utf-8-sig') as f:
             srt_content = f.read()
@@ -157,23 +149,40 @@ class Translator:
             return subtitle_path
 
         target_language = self.config.get("language", "English")
-        batch_size = 20  # Translate 20 lines at a time
-        translated_blocks = []
+        batch_size = 50  # Increased batch size
+        concurrency_limit = 10
+        semaphore = asyncio.Semaphore(concurrency_limit)
+        
+        translated_blocks = [None] * len(blocks)
+        tasks = []
+        
+        processed_count = 0
+        total_count = len(blocks)
+
+        async def translate_and_place(batch_blocks, start_index):
+            nonlocal processed_count
+            async with semaphore:
+                texts_to_translate = [block.text for block in batch_blocks]
+                translated_texts = await self._translate_batch(texts_to_translate, target_language)
+                
+                for i, translated_text in enumerate(translated_texts):
+                    original_block = batch_blocks[i]
+                    original_block.text = translated_text
+                    translated_blocks[start_index + i] = original_block
+                
+                processed_count += len(batch_blocks)
+                if progress_callback:
+                    progress_callback(processed_count, total_count)
 
         for i in range(0, len(blocks), batch_size):
             batch = blocks[i:i+batch_size]
-            texts_to_translate = [block.text for block in batch]
-            
-            translated_texts = await self._translate_batch(texts_to_translate, target_language)
-            
-            for j, block in enumerate(batch):
-                block.text = translated_texts[j]
-                translated_blocks.append(block)
-            
-            if progress_callback:
-                progress_callback(i + len(batch), len(blocks))
+            task = translate_and_place(batch, i)
+            tasks.append(task)
+
+        await asyncio.gather(*tasks)
         
-        translated_srt_content = self._reconstruct_srt(translated_blocks)
+        final_blocks = [b for b in translated_blocks if b is not None]
+        translated_srt_content = self._reconstruct_srt(final_blocks)
         
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(translated_srt_content)
@@ -182,16 +191,10 @@ class Translator:
         return output_path
 
     async def translate_subtitle(self, subtitle_path: Path, output_path: Path, progress_callback: Optional[Callable[[int, int], None]] = None) -> Path:
-        """
-        Translate subtitle file using the new native Python implementation.
-        """
         if not self._initialized:
             raise RuntimeError("Translator is not initialized. Check API key and configuration.")
-            
         try:
-            # --- NEW NATIVE IMPLEMENTATION ---
             return await self._translate_srt_file_natively(subtitle_path, output_path, progress_callback)
-
         except Exception as e:
             logging.error(f"An error occurred during native translation: {e}")
             raise
