@@ -13,6 +13,8 @@ class Translator:
     _initialized = False
     _cache_file = Path(".translation_cache.json")
     _cache = {}
+    last_request_time = 0
+    min_request_interval = 60 / 10  # 10 requests per minute
     
     def __new__(cls, config: Dict):
         if cls._instance is None:
@@ -55,6 +57,14 @@ class Translator:
             logging.info(f"Configuring Google AI with API key (first 8 chars): {api_key[:8]}...")
             genai.configure(api_key=api_key)
             
+            # Get list of available models
+            try:
+                available_models = [m.name for m in genai.list_models()]
+                logging.info(f"Available models: {available_models}")
+            except Exception as e:
+                logging.warning(f"Could not list available models: {e}")
+                available_models = []
+            
             # Get model name with fallback
             self.model_name = self.config.get("model", "gemini-1.5-flash")
             logging.info(f"Attempting to initialize model: {self.model_name}")
@@ -63,24 +73,33 @@ class Translator:
             models_to_try = [
                 self.model_name,
                 f"models/{self.model_name}",
-                "gemini-1.5-flash",  # Default fallback 1
+                "gemini-1.5-flash",
                 "models/gemini-1.5-flash",
-                "gemini-1.5-pro",    # Default fallback 2
+                "gemini-1.5-pro",
                 "models/gemini-1.5-pro"
             ]
+            
+            # Filter to only try available models if we could get the list
+            if available_models:
+                models_to_try = [m for m in models_to_try if m in available_models or m.replace('models/', '') in available_models]
             
             # Remove duplicates while preserving order
             seen = set()
             models_to_try = [m for m in models_to_try if not (m in seen or seen.add(m))]
             
-            last_error = None
+            if not models_to_try:
+                raise RuntimeError("No valid models available to initialize")
+                
+            logging.info(f"Will try these models in order: {models_to_try}")
             
+            last_error = None
             for model_name in models_to_try:
                 try:
                     logging.info(f"Trying model: {model_name}")
                     self.model = genai.GenerativeModel(
                         model_name=model_name,
-                        generation_config=self.generation_config
+                        generation_config=self.generation_config,
+                        safety_settings=self.safety_settings
                     )
                     # Test the model with a simple request
                     response = self.model.generate_content("Test connection")
@@ -116,10 +135,11 @@ class Translator:
             error_msg = f"Failed to initialize translator: {str(e)}"
             logging.error(error_msg)
             if "quota" in str(e).lower():
-                error_msg += "\n\nYou've exceeded your daily quota for the Gemini API. Please check:"
-                error_msg += "\n1. Your Google Cloud Console billing and quotas"
-                error_msg += "\n2. The free tier limits at https://ai.google.dev/gemini-api/docs/rate-limits"
-                error_msg += "\n3. Try again in 24 hours or upgrade your plan"
+                error_msg += "\n\nYou've exceeded your daily quota for the Gemini API. Would you like to use a mock translator for testing?"
+                error_msg += "\nTo fix this, you can:"
+                error_msg += "\n1. Wait 24 hours for the quota to reset"
+                error_msg += "\n2. Upgrade your Google Cloud billing plan"
+                error_msg += "\n3. Use a different API key with available quota"
             raise RuntimeError(error_msg) from e
     
     def _load_cache(self):
@@ -159,6 +179,19 @@ class Translator:
         }
         return hashlib.md5(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
     
+    def _rate_limit(self):
+        """Ensure we don't exceed the rate limit of 10 requests per minute"""
+        import time
+        now = time.time()
+        time_since_last = now - self.last_request_time
+        
+        if time_since_last < self.min_request_interval:
+            sleep_time = self.min_request_interval - time_since_last
+            logging.debug(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
+            time.sleep(sleep_time)
+        
+        self.last_request_time = time.time()
+
     async def _translate_with_retry(self, text: str, max_retries: int = 3) -> str:
         """
         Translate text with retry logic for rate limits.
@@ -241,6 +274,20 @@ class Translator:
         
         # Return original text if all retries fail
         return text
+    
+    async def _translate_text(self, text: str) -> str:
+        """Translate a single piece of text with rate limiting"""
+        self._rate_limit()
+        try:
+            response = await self.model.generate_content_async(
+                f"Translate this text to {self.config.get('target_language', 'English')}: {text}",
+                generation_config=self.generation_config,
+                safety_settings=self.safety_settings
+            )
+            return response.text.strip()
+        except Exception as e:
+            logging.error(f"Translation error: {e}")
+            raise
     
     async def translate_subtitle(self, subtitle_path: Path, output_path: Path, 
                               progress_callback: Optional[Callable[[int, int], None]] = None) -> Path:
