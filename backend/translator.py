@@ -102,7 +102,14 @@ class Translator:
     def _reconstruct_srt(self, blocks: List[SubtitleBlock]) -> str:
         # Sort blocks by index before reconstructing
         blocks.sort(key=lambda b: b.index if b else 0)
-        return '\n\n'.join(str(block) for block in blocks if block)
+        
+        srt_content = '\n\n'.join(str(block) for block in blocks if block)
+
+        if self.config.get("add_translator_info", False):
+            translator_info = "0\n00:00:00,000 --> 00:00:00,000\nTranslated by Gemini SRT Translator @VenimK\n\n"
+            srt_content = translator_info + srt_content
+            
+        return srt_content
 
     async def _translate_batch(self, texts: List[str], target_language: str) -> List[str]:
         # Rate limiting is now handled by the semaphore in the calling function
@@ -111,6 +118,11 @@ class Translator:
 
         try:
             response = await self.model.generate_content_async(prompt)
+            
+            if not response.candidates:
+                logging.warning("Batch translation returned no candidates. Falling back.")
+                return [await self._translate_text(text, target_language) for text in texts]
+
             response_text = response.candidates[0].content.parts[0].text
             
             try:
@@ -139,6 +151,9 @@ class Translator:
             response = await self.model.generate_content_async(
                 f"Translate this to {target_language}: {text}"
             )
+            if not response.candidates:
+                logging.warning("Single translation returned no candidates.")
+                return text
             return response.candidates[0].content.parts[0].text.strip()
         except Exception as e:
             logging.error(f"Single translation error: {e}")
