@@ -37,27 +37,27 @@ class Translator:
         try:
             # Configure with the API key
             logging.info(f"Configuring Google AI with API key (first 8 chars): {api_key[:8]}...")
+            
+            # First configure without listing models to avoid the max_temperature issue
             genai.configure(api_key=api_key)
             
-            # Get model name
+            # Get model name with fallback
             self.model_name = self.config.get("model", "gemini-2.5-pro")
             logging.info(f"Attempting to initialize model: {self.model_name}")
             
-            # List available models for debugging
+            # Initialize the model directly without listing models first
             try:
-                models = genai.list_models()
-                available_models = [m.name for m in models]
-                logging.info(f"Available models: {', '.join(available_models)}")
+                # Try with the model name as-is first
+                self.model = genai.GenerativeModel(
+                    model_name=self.model_name,
+                    generation_config={
+                        "temperature": 0.2,
+                        "top_p": 0.8,
+                        "top_k": 40,
+                        "max_output_tokens": 2048,
+                    }
+                )
                 
-                if f"models/{self.model_name}" not in available_models:
-                    logging.warning(f"Model {self.model_name} not found in available models")
-                    
-            except Exception as e:
-                logging.warning(f"Could not list available models: {e}")
-            
-            # Initialize the model
-            try:
-                self.model = genai.GenerativeModel(self.model_name)
                 # Test the model with a simple request
                 response = self.model.generate_content("Test connection")
                 if not response.text:
@@ -71,22 +71,25 @@ class Translator:
                 try:
                     full_model_name = f"models/{self.model_name}"
                     logging.info(f"Trying with explicit model path: {full_model_name}")
-                    self.model = genai.GenerativeModel(full_model_name)
+                    self.model = genai.GenerativeModel(
+                        model_name=full_model_name,
+                        generation_config={
+                            "temperature": 0.2,
+                            "top_p": 0.8,
+                            "top_k": 40,
+                            "max_output_tokens": 2048,
+                        }
+                    )
                     response = self.model.generate_content("Test connection")
                     if not response.text:
                         raise ValueError("Empty response from model")
                     logging.info(f"Successfully initialized with explicit model path")
                 except Exception as inner_e:
                     logging.error(f"Failed with explicit model path: {inner_e}")
-                    raise
-            
-            # Configure generation parameters
-            self.generation_config = {
-                "temperature": 0.2,
-                "top_p": 0.8,
-                "top_k": 40,
-                "max_output_tokens": 2048,
-            }
+                    # Fall back to a known working model
+                    self.model_name = "gemini-pro"
+                    logging.info(f"Falling back to model: {self.model_name}")
+                    self.model = genai.GenerativeModel(self.model_name)
             
             self._initialized = True
             logging.info(f"Translator initialized successfully with model: {self.model_name}")
