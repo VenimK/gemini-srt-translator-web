@@ -279,22 +279,15 @@ class Translator:
         """Translate a single piece of text with rate limiting"""
         self._rate_limit()
         try:
-            # Use the direct API format that matches your working curl command
-            model = self.model_name if self.model_name.startswith('models/') else f'models/{self.model_name}'
+            prompt = f"Translate the following text to {self.config.get('target_language', 'English')}. " \
+                    f"Maintain the original meaning and tone. Do not add any extra text or explanations, " \
+                    f"only provide the translated text.\n\nOriginal Text:\n---\n{text}"
             
-            # Format the request to match the working curl example
-            response = await self.model.client.generate_content(
-                model=model,
-                contents=[{"parts": [{"text": text}]}],
-                generation_config=self.generation_config,
-                safety_settings=self.safety_settings
-            )
-            
-            # Extract the response text
-            if not response.candidates or not response.candidates[0].content.parts:
+            response = self.model.generate_content(prompt)
+            if not response.text:
                 raise ValueError("Empty response from model")
                 
-            return response.candidates[0].content.parts[0].text.strip()
+            return response.text.strip()
             
         except Exception as e:
             logging.error(f"Translation error: {e}")
