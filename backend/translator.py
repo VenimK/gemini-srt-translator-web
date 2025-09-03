@@ -113,15 +113,22 @@ class Translator:
             response = await self.model.generate_content_async(prompt)
             response_text = response.candidates[0].content.parts[0].text
             
-            json_match = re.search(r'```json\n(.*)\n```', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-                translated_data = json.loads(json_str)
-                translated_lines = translated_data["translated_lines"]
-                if len(translated_lines) == len(texts):
-                    return translated_lines
+            try:
+                # Try to find JSON within the response text
+                start = response_text.find('{')
+                end = response_text.rfind('}') + 1
+                if start != -1 and end != -1:
+                    json_str = response_text[start:end]
+                    translated_data = json.loads(json_str)
+                    translated_lines = translated_data["translated_lines"]
+                    if len(translated_lines) == len(texts):
+                        return translated_lines
+            except json.JSONDecodeError as e:
+                logging.warning(f"Failed to parse JSON response: {e}")
+                logging.warning(f"Problematic JSON string: {json_str}")
 
-            logging.warning("JSON response issue. Falling back.")
+            # If anything fails, fall back
+            logging.warning("Falling back to individual translation for this batch.")
             return [await self._translate_text(text, target_language) for text in texts]
         except Exception as e:
             logging.error(f"Batch translation error: {e}")
