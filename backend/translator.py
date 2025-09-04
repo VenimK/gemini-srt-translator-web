@@ -146,6 +146,13 @@ class Translator:
             logging.error(f"Batch translation error: {e}")
             return [await self._translate_text(text, target_language) for text in texts]
 
+    async def _rate_limit(self):
+        current_time = time.time()
+        elapsed = current_time - self.last_request_time
+        if elapsed < self.min_request_interval:
+            await asyncio.sleep(self.min_request_interval - elapsed)
+        self.last_request_time = time.time()
+
     async def _translate_text(self, text: str, target_language: str) -> str:
         await self._rate_limit() # Add rate limiting here
         try:
