@@ -9,6 +9,7 @@ import asyncio
 import re
 
 import google.generativeai as genai
+import json_repair
 
 class SubtitleBlock:
     def __init__(self, index: int, start_time: str, end_time: str, text: str):
@@ -131,7 +132,7 @@ class Translator:
                 end = response_text.rfind('}') + 1
                 if start != -1 and end != -1:
                     json_str = response_text[start:end]
-                    translated_data = json.loads(json_str)
+                    translated_data = json_repair.loads(json_str)
                     translated_lines = translated_data["translated_lines"]
                     if len(translated_lines) == len(texts):
                         return translated_lines
