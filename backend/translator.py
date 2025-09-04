@@ -147,12 +147,13 @@ class Translator:
             return [await self._translate_text(text, target_language) for text in texts]
 
     async def _translate_text(self, text: str, target_language: str) -> str:
+        await self._rate_limit() # Add rate limiting here
         try:
             response = await self.model.generate_content_async(
                 f"Translate this to {target_language}: {text}"
             )
-            if not response.candidates:
-                logging.warning("Single translation returned no candidates.")
+            if not response.candidates or not response.candidates[0].content.parts:
+                logging.warning("Single translation returned no content.")
                 return text
             return response.candidates[0].content.parts[0].text.strip()
         except Exception as e:
