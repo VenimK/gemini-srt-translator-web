@@ -62,7 +62,7 @@ class Translator:
             self._initialized = False
             return
 
-        new_model_name = self.config.get("model", "gemini-1.5-flash-latest")
+        new_model_name = self.config.get("model", "gemini-2.5-flash")
         if api_key != old_api_key or new_model_name != old_model_name or not hasattr(self, 'model'):
             try:
                 logging.info(f"Initializing Gemini client with API key...")
