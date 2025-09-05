@@ -39,13 +39,20 @@ class Translator:
         old_api_key = self.config.get("gemini_api_key") if hasattr(self, 'config') else None
         old_model_name = self.config.get("model") if hasattr(self, 'config') else None
 
-        self.config = config
+        self.config = config # Store the full config
         self._load_cache()
 
+        # New parameters from config
+        self.gemini_api_key2 = config.get("gemini_api_key2")
+        self.batch_size = config.get("batch_size", 50) # Default to 50
+        self.streaming = config.get("streaming", True) # Default to True
+        self.description = config.get("description")
+
+        # Update generation_config with new parameters
         self.generation_config = {
-            "temperature": 0.2,
-            "top_p": 0.8,
-            "top_k": 40,
+            "temperature": config.get("temperature", 0.2), # Use config value, default to 0.2
+            "top_p": config.get("top_p", 0.8), # Use config value, default to 0.8
+            "top_k": config.get("top_k", 40), # Use config value, default to 40
             "max_output_tokens": 8192,
         }
 
@@ -63,7 +70,7 @@ class Translator:
             self._initialized = False
             return
 
-        new_model_name = self.config.get("model", "gemini-2.5-flash")
+        new_model_name = self.config.get("model", "gemini-1.5-flash-latest")
         if api_key != old_api_key or new_model_name != old_model_name or not hasattr(self, 'model'):
             try:
                 logging.info(f"Initializing Gemini client with API key...")
@@ -180,7 +187,7 @@ class Translator:
             return subtitle_path
 
         target_language = self.config.get("language", "English")
-        batch_size = 50  # Increased batch size
+        batch_size = self.batch_size # Use self.batch_size from config
         concurrency_limit = 10
         semaphore = asyncio.Semaphore(concurrency_limit)
         

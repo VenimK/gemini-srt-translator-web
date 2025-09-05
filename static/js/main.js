@@ -22,6 +22,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const translateBtn = document.getElementById('translateBtn');
     const fetchTmdbBtn = document.getElementById('fetchTmdbBtn');
 
+    // New elements
+    const geminiApiKey2Input = document.getElementById('geminiApiKey2');
+    const batchSizeInput = document.getElementById('batchSize');
+    const thinkingBudgetInput = document.getElementById('thinkingBudget');
+    const temperatureInput = document.getElementById('temperature');
+    const topPInput = document.getElementById('topP');
+    const topKInput = document.getElementById('topK');
+    const streamingCheckbox = document.getElementById('streaming');
+    const thinkingCheckbox = document.getElementById('thinking');
+    const descriptionInput = document.getElementById('description');
+
     const tmdbInfoDiv = document.getElementById('tmdb-info');
     const tmdbTitleSpan = document.getElementById('tmdb-title');
     const tmdbYearSpan = document.getElementById('tmdb-year');
@@ -70,32 +81,71 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateProgressBarFromData(logData) {
-        let percentage = 0;
-        let currentFileText = '';
-
-        if (logData.type === 'progress') {
-            const files_done = logData.current -1;
-            percentage = Math.round((files_done / logData.total) * 100);
-            currentFileText = `Starting: ${logData.filename}`;
-            if (logData.message) {
-                logToConsole(logData.message, 'info');
-            }
-            updateFileStatusByName(logData.filename, 'Translating...', 'bg-info');
-
-        } else if (logData.type === 'translation_progress') {
-            const files_done = logData.current_file - 1;
-            const progress_of_current_file = logData.current_chunk / logData.total_chunks;
-            const total_progress = (files_done + progress_of_current_file) / logData.total_files;
-            percentage = Math.round(total_progress * 100);
-            currentFileText = `Translating: ${logData.filename} (${logData.current_chunk}/${logData.total_chunks})`;
-        }
-
         const progressBar = document.getElementById('translationProgress');
         const progressText = document.getElementById('progressText');
-        progressBar.style.width = `${percentage}%`;
-        progressBar.setAttribute('aria-valuenow', percentage);
-        progressText.textContent = `${percentage}%`;
-        document.getElementById('currentFile').textContent = currentFileText;
+        const currentFile = document.getElementById('currentFile');
+        const progressContainer = document.getElementById('progressContainer');
+        
+        // Make sure the progress container is visible
+        if (progressContainer) {
+            progressContainer.style.display = 'block';
+        }
+        
+        if (logData.type === 'progress') {
+            const progress = logData.total > 0 ? Math.round((logData.current / logData.total) * 100) : 0;
+            if (progressBar) {
+                progressBar.style.width = `${progress}%`;
+                progressBar.setAttribute('aria-valuenow', progress);
+                progressBar.classList.remove('bg-success', 'bg-warning', 'bg-danger');
+                progressBar.classList.add('bg-info');
+            }
+            if (progressText) {
+                progressText.textContent = `${progress}% - ${logData.current || 0}/${logData.total || 0} files`;
+            }
+            if (currentFile) {
+                currentFile.textContent = logData.filename || logData.message || '';
+            }
+        } else if (logData.type === 'translation_progress') {
+            const progress = logData.total_chunks > 0 ? Math.round((logData.current_chunk / logData.total_chunks) * 100) : 0;
+            if (progressBar) {
+                progressBar.style.width = `${progress}%`;
+                progressBar.setAttribute('aria-valuenow', progress);
+                progressBar.classList.remove('bg-success', 'bg-warning', 'bg-danger');
+                progressBar.classList.add('bg-info');
+            }
+            if (progressText) {
+                progressText.textContent = `${progress}% - File ${logData.current_file || 1}/${logData.total_files || 1}`;
+            }
+            if (currentFile) {
+                currentFile.textContent = logData.filename || 'Processing...';
+            }
+        } else if (logData.type === 'log') {
+            if (logData.level === 'error') {
+                // Handle error state
+                if (progressBar) {
+                    progressBar.classList.remove('bg-info', 'bg-warning');
+                    progressBar.classList.add('bg-danger');
+                }
+                if (progressText) {
+                    progressText.textContent = 'Error: ' + (logData.message || 'An error occurred');
+                }
+            } else if (logData.level === 'warning') {
+                // Handle warning state
+                if (progressBar) {
+                    progressBar.classList.remove('bg-info', 'bg-danger');
+                    progressBar.classList.add('bg-warning');
+                }
+            } else if (logData.level === 'success') {
+                // Handle success state
+                if (progressBar) {
+                    progressBar.classList.remove('bg-info', 'bg-warning', 'bg-danger');
+                    progressBar.classList.add('bg-success');
+                }
+                if (progressText) {
+                    progressText.textContent = 'Translation complete!';
+                }
+            }
+        }
     }
 
     function showLoading() {
@@ -279,6 +329,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 seriesTitleInput.value = config.series_title || '';
                 addTranslatorInfoCheckbox.checked = config.add_translator_info !== false;
 
+                // Populate new fields
+                geminiApiKey2Input.value = config.gemini_api_key2 || '';
+                batchSizeInput.value = config.batch_size !== undefined ? config.batch_size : 50;
+                thinkingBudgetInput.value = config.thinking_budget !== undefined ? config.thinking_budget : 0;
+                temperatureInput.value = config.temperature !== undefined ? config.temperature : 0.2;
+                topPInput.value = config.top_p !== undefined ? config.top_p : 0.8;
+                topKInput.value = config.top_k !== undefined ? config.top_k : 40;
+                streamingCheckbox.checked = config.streaming !== false; // Default to true if not set
+                thinkingCheckbox.checked = config.thinking || false; // Default to false if not set
+                descriptionInput.value = config.description || '';
+
                 if (config.language && config.language_code) {
                     const option = Array.from(languageSelect.options).find(
                         opt => opt.value === `${config.language}|${config.language_code}`
@@ -333,6 +394,7 @@ document.addEventListener('DOMContentLoaded', () => {
     saveConfigBtn.addEventListener('click', async () => {
         const config = {
             gemini_api_key: geminiApiKeyInput.value,
+            gemini_api_key2: geminiApiKey2Input.value,
             model: modelSelect.value,
             tmdb_api_key: tmdbApiKeyInput.value,
             language: languageInput.value,
@@ -340,30 +402,32 @@ document.addEventListener('DOMContentLoaded', () => {
             extract_audio: extractAudioCheckbox.checked,
             auto_fetch_tmdb: autoFetchTmdbCheckbox.checked,
             is_tv_series: isTvSeriesCheckbox.checked,
-            series_title: seriesTitleInput.value,
             add_translator_info: addTranslatorInfoCheckbox.checked,
+            series_title: seriesTitleInput.value,
+            batch_size: parseInt(batchSizeInput.value) || 50,
+            streaming: streamingCheckbox.checked,
+            thinking: thinkingCheckbox.checked,
+            thinking_budget: parseInt(thinkingBudgetInput.value) || 0,
+            temperature: parseFloat(temperatureInput.value) || 0.2,
+            top_p: parseFloat(topPInput.value) || 0.8,
+            top_k: parseInt(topKInput.value) || 40,
+            description: descriptionInput.value
         };
 
-        showLoading();
         try {
             const response = await fetch('/config/', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(config),
+                body: JSON.stringify(config)
             });
 
             if (response.ok) {
-                logToConsole("Configuration saved successfully!", 'success');
-                showNotification('Configuration saved!');
+                showNotification('Configuration saved successfully!');
             } else {
-                const errorData = await response.json();
-                const errorMessage = `Error saving configuration: ${errorData.detail || response.statusText}`;
-                logToConsole(errorMessage, 'error');
-                showNotification(errorMessage, true);
+                throw new Error('Failed to save configuration');
             }
         } catch (error) {
-            const errorMessage = `Network error saving configuration: ${error.message}`;
-            logToConsole(errorMessage, 'error');
+            showNotification(`Error saving configuration: ${error.message}`, true);
             showNotification(errorMessage, true);
         } finally {
             hideLoading();
@@ -457,11 +521,49 @@ document.addEventListener('DOMContentLoaded', () => {
         updateProgressBarFromData({type: 'progress', current: 0, total: selectedFiles.length, filename: ''});
 
         try {
+            // Create the request data with selected_files as the main array
+            // and other parameters as top-level properties
+            const requestData = {
+                selected_files: selectedFiles.map(file => ({
+                    subtitle: file.subtitle,
+                    video: file.video,
+                    status: file.status || 'pending'
+                })),
+                gemini_api_key2: geminiApiKey2Input.value || undefined,
+                batch_size: parseInt(batchSizeInput.value) || undefined,
+                temperature: parseFloat(temperatureInput.value) || undefined,
+                top_p: parseFloat(topPInput.value) || undefined,
+                top_k: parseInt(topKInput.value) || undefined,
+                streaming: streamingCheckbox.checked || undefined,
+                thinking: thinkingCheckbox.checked || undefined,
+                thinking_budget: parseInt(thinkingBudgetInput.value) || undefined,
+                description: descriptionInput.value || undefined
+            };
+            
+            // Remove undefined values to avoid sending them
+            Object.keys(requestData).forEach(key => {
+                if (requestData[key] === undefined) {
+                    delete requestData[key];
+                }
+            });
+            
+            console.log('Sending request data:', JSON.stringify(requestData, null, 2));
+
+            // Send the request with the prepared data
             const response = await fetch('/translate/', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(selectedFiles)
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(requestData)
             });
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                console.error('Server error response:', errorData);
+                throw new Error(`Server responded with status ${response.status}: ${JSON.stringify(errorData.detail || errorData) || response.statusText}`);
+            }
 
             if (response.ok) {
                 const results = await response.json();

@@ -15,6 +15,7 @@ class ConfigManager:
     def _default_config(self):
         return {
             "gemini_api_key": "",
+            "gemini_api_key2": "",
             "model": "gemini-2.5-flash",
             "tmdb_api_key": "",
             "language": "English",
@@ -22,7 +23,15 @@ class ConfigManager:
             "extract_audio": False,
             "auto_fetch_tmdb": True,
             "is_tv_series": False,
-            "add_translator_info": True
+            "add_translator_info": True,
+            "batch_size": 50,
+            "streaming": True,
+            "thinking": False,
+            "thinking_budget": 0,
+            "temperature": 0.2,
+            "top_p": 0.8,
+            "top_k": 40,
+            "description": ""
         }
 
     def save_config(self):

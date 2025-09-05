@@ -9,7 +9,8 @@ import asyncio
 import logging
 import threading
 from collections import deque
-from typing import Deque
+from typing import Any, Deque, Optional, Union, List, Dict
+from pydantic import BaseModel
 
 from backend.file_utils import classify_file_type, find_video_matches
 from backend.config_manager import ConfigManager
@@ -29,14 +30,14 @@ class JsonFormatter(logging.Formatter):
             try:
                 return record.getMessage()
             except json.JSONDecodeError:
-                pass # Fallback to standard logging
+                pass  # Fallback to standard logging
         
         return json.dumps(log_data)
 
 class LogBroadcaster:
     def __init__(self):
         self._lock = threading.Lock()
-        self.clients: list[asyncio.Queue] = []
+        self.clients: List[asyncio.Queue] = []
         self.history: Deque[str] = deque(maxlen=100)
 
     def add_log(self, log_entry: str):
@@ -81,9 +82,9 @@ logging.addLevelName(logging.PROGRESS, "PROGRESS")
 
 # Configure root logger for terminal output
 logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S',
-                    handlers=[logging.StreamHandler()])
+                   format='%(asctime)s - %(levelname)s - %(message)s',
+                   datefmt='%Y-%m-%d %H:%M:%S',
+                   handlers=[logging.StreamHandler()])
 
 # Get the root logger and add our custom handler for the web UI
 root_logger = logging.getLogger()
@@ -91,13 +92,26 @@ root_logger.addHandler(AppLogHandler(broadcaster))
 
 # --- End Logging Setup ---
 
-app = FastAPI()
+class TranslationRequest(BaseModel):
+    selected_files: List[Dict[str, Any]]
+    gemini_api_key2: Optional[str] = None
+    batch_size: Optional[int] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    streaming: Optional[bool] = None
+    thinking: Optional[bool] = None
+    thinking_budget: Optional[int] = None
+    description: Optional[str] = None
 
+app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Initialize config manager and translator
 config_manager = ConfigManager(config_file="config.json")
 translator = Translator(config_manager.config)
 
+# Ensure required directories exist
 UPLOAD_DIR = Path("temp_uploads")
 TRANSLATED_DIR = Path("translated_subtitles")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -154,10 +168,39 @@ async def get_models():
     return JSONResponse(content=models)
 
 @app.post("/translate/")
-async def translate_files_endpoint(selected_files: list[dict]):
+async def translate_files_endpoint(request: TranslationRequest):
+    selected_files = request.selected_files
+    
+    # Update config_manager with parameters from the request
+    update_params = {}
+    if request.batch_size is not None:
+        update_params["batch_size"] = request.batch_size
+    if request.gemini_api_key2 is not None:
+        update_params["gemini_api_key2"] = request.gemini_api_key2
+    if request.streaming is not None:
+        update_params["streaming"] = request.streaming
+    if request.thinking is not None:
+        update_params["thinking"] = request.thinking
+    if request.thinking_budget is not None:
+        update_params["thinking_budget"] = request.thinking_budget
+    if request.temperature is not None:
+        update_params["temperature"] = request.temperature
+    if request.top_p is not None:
+        update_params["top_p"] = request.top_p
+    if request.top_k is not None:
+        update_params["top_k"] = request.top_k
+    if request.description is not None:
+        update_params["description"] = request.description
+
+    if update_params:
+        config_manager.update(update_params)
+        # Re-initialize translator with updated config
+        translator._initialize(config_manager.config)
+        logging.info("Translator configuration updated for current request.")
+
     num_files = len(selected_files)
     logging.info(f"Received translation request for {num_files} files. Starting batch translation...")
-    language_code = config_manager.get("language_code", "en")
+    language_code = config_manager.get("language_code", "en") # language_code is still from config
     
     translated_results = []
     for i, file_pair in enumerate(selected_files):
@@ -238,15 +281,43 @@ async def get_tmdb_info(filename: str, series_title: str = None):
 
 @app.get("/logs/stream/")
 async def stream_logs():
-    q = await broadcaster.subscribe()
-    async def log_generator():
+    async def event_generator():
+        q = await broadcaster.subscribe()
         try:
             while True:
-                log_entry = await q.get()
-                yield f"data: {log_entry}\n\n"
-        finally:
+                log = await q.get()
+                # Ensure the log is a string before yielding
+                if isinstance(log, str):
+                    # If it's a string, it might already be JSON, try to parse it
+                    try:
+                        log_data = json.loads(log)
+                        # If it has a type, it's a progress update
+                        if 'type' in log_data:
+                            yield f"data: {log}\n\n"
+                            continue
+                    except json.JSONDecodeError:
+                        # If it's not JSON, send it as a regular log
+                        pass
+                
+                # For non-progress logs, format them as a log message
+                log_entry = {
+                    "type": "log",
+                    "level": "info",
+                    "message": str(log)
+                }
+                yield f"data: {json.dumps(log_entry)}\n\n"
+        except asyncio.CancelledError:
             broadcaster.unsubscribe(q)
-    return StreamingResponse(log_generator(), media_type="text/event-stream")
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'  # Disable buffering for nginx
+        }
+    )
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):

@@ -20,13 +20,13 @@
     <div class="container-fluid mt-4">
         <div class="row">
             <!-- Left Column: File Management -->
-            <div class="col-md-7">
+            <div class="col-md-12">
                 <div id="drop-area" class="drop-area mb-3">
                     <p>Drag & Drop files or folders here, or click to browse</p>
                     <input type="file" id="fileInput" multiple webkitdirectory directory style="display: none;">
                 </div>
 
-                <div class="file-list" id="file-list">
+                <div class="file-list mb-4" id="file-list">
                     <h2>Detected Files</h2>
                     <p id="no-files-message">No files detected yet.</p>
                     <table class="table table-striped">
@@ -43,10 +43,80 @@
                         </tbody>
                     </table>
                 </div>
+
+                <!-- Advanced Settings Section -->
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="action-section mb-4">
+                            <h2><i class="fas fa-play"></i> Actions</h2>
+                            <div class="button-group mb-3">
+                                <button id="fetchTmdbBtn" class="btn btn-info"><i class="fas fa-film"></i> Fetch TMDB Info</button>
+                                <button id="translateBtn" class="btn btn-success"><i class="fas fa-globe"></i> TRANSLATE</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="fas fa-cogs"></i> Advanced Translation Settings</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="geminiApiKey2" class="form-label">Secondary Gemini API Key:</label>
+                                            <input type="password" id="geminiApiKey2" class="form-control">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="batchSize" class="form-label">Batch Size:</label>
+                                            <input type="number" id="batchSize" class="form-control" min="1" value="50">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="thinkingBudget" class="form-label">Thinking Budget (0-24576):</label>
+                                            <input type="number" id="thinkingBudget" class="form-control" min="0" max="24576" value="0">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="temperature" class="form-label">Temperature (0.0-2.0):</label>
+                                            <input type="number" id="temperature" class="form-control" step="0.1" min="0.0" max="2.0" value="0.2">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="topP" class="form-label">Top P (0.0-1.0):</label>
+                                            <input type="number" id="topP" class="form-control" step="0.01" min="0.0" max="1.0" value="0.8">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="topK" class="form-label">Top K (>=0):</label>
+                                            <input type="number" id="topK" class="form-control" min="0" value="40">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input" type="checkbox" id="streaming" checked>
+                                            <label class="form-check-label" for="streaming">Enable Streaming</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch mb-3">
+                                            <input class="form-check-input" type="checkbox" id="thinking">
+                                            <label class="form-check-label" for="thinking">Enable Thinking Mode</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="description" class="form-label">Description for Context:</label>
+                                    <textarea id="description" class="form-control" rows="2" placeholder="Provide additional context for translation..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <!-- Right Column: Configuration, Actions, and Output -->
-            <div class="col-md-5">
+            <!-- Right Column: Configuration and Output -->
+            <div class="col-md-5 mt-0">
                 <div class="config-section mb-3">
                     <h2><i class="fas fa-cogs"></i> Configuration</h2>
                     <div class="mb-3">
@@ -114,13 +184,6 @@
                     </div>
                 </div>
 
-                <div class="action-section mb-3">
-                    <h2><i class="fas fa-play"></i> Actions</h2>
-                    <div class="button-group mb-3">
-                        <button id="fetchTmdbBtn" class="btn btn-info"><i class="fas fa-film"></i> Fetch TMDB Info</button>
-                        <button id="translateBtn" class="btn btn-success"><i class="fas fa-globe"></i> TRANSLATE</button>
-                    </div>
-                </div>
 
                 <div id="loading-indicator" class="d-none">
                     <div class="spinner-border text-primary" role="status">
